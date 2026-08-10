@@ -4,7 +4,8 @@ Cria (ou remixa) playlists do Spotify ordenadas como um set de DJ — BPM
 vizinho e tom compatível — pra soar como uma faixa contínua quando você
 ativa o **Crossfade + Automix** no Spotify desktop.
 
-Funciona para **qualquer artista** ou **qualquer playlist já existente**.
+Funciona para **qualquer artista** ou **qualquer playlist sua** (dona ou
+colaborador — veja a limitação do `--playlist` mais abaixo).
 
 Dados de BPM/tom, quando não disponíveis via Spotify, são complementados
 opcionalmente pela API pública da [GetSongBPM.com](https://getsongbpm.com/) —
@@ -119,6 +120,12 @@ No **Spotify desktop**:
 
 ## Limitações honestas
 
+- **`--playlist` só funciona com playlist sua (dona ou colaborador):**
+  desde a migração da Spotify de fev/2026, `GET /v1/playlists/{id}` não
+  devolve mais os itens completos de playlists de terceiros (nem as
+  públicas) — o campo `tracks` simplesmente some da resposta, sem erro.
+  O programa detecta isso e avisa em vez de quebrar. Se quiser remixar a
+  playlist de outra pessoa, clone ela pra sua conta primeiro.
 - **audio-features da Spotify:** bloqueado por padrão pra apps novos
   desde nov/2024. O programa detecta e avisa; não é bug.
 - **Endpoints "vários de uma vez" (`GET /v1/albums?ids=`, `GET /v1/tracks?ids=`):**
@@ -135,7 +142,13 @@ No **Spotify desktop**:
   novo; o `cli.py` desliga isso (`status_retries=0`) e falha na hora com
   uma mensagem clara em vez de travar o programa o dia todo. Se isso
   acontecer, espere o tempo indicado antes de rodar de novo — não é bug,
-  é o limite da própria Spotify.
+  é o limite da própria Spotify. Confirmado que é **por app (Client ID)**,
+  não por conta — trocar de conta Spotify não ajuda, só `--env-file`
+  apontando pra outro Client ID (veja acima).
+- **Criar playlist dava 403:** a Spotify descontinuou `POST /users/{id}/playlists`
+  na mesma migração de fev/2026 (esse é o endpoint que o método
+  `user_playlist_create` do spotipy usa por baixo). O código já usa o
+  substituto certo, `current_user_playlist_create` (`POST /me/playlists`).
 - **getsongbpm.com (fallback):** é uma API pública de terceiros, os
   nomes exatos dos campos podem variar por conta. Rode com `--debug-bpm`
   pra ver a resposta crua se os dados vierem estranhos, e ajuste

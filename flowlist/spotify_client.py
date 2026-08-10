@@ -194,8 +194,21 @@ def extract_playlist_id(playlist_url_or_id: str) -> str:
 
 def get_playlist_tracks(sp: spotipy.Spotify, playlist_url_or_id: str) -> tuple[list[Track], str]:
     playlist_id = extract_playlist_id(playlist_url_or_id)
-    playlist = sp.playlist(playlist_id, fields="name,tracks.items(track),tracks.next")
+    playlist = sp.playlist(playlist_id, fields="name,owner.id,tracks.items(track),tracks.next")
     name = playlist["name"]
+
+    # Desde a migração de fev/2026, a Spotify só devolve os itens completos
+    # de uma playlist que você é dono ou colaborador — pra qualquer outra
+    # (inclusive playlists públicas de terceiros), o campo "tracks" some da
+    # resposta sem erro nenhum (confirmado testando na prática). Então
+    # --playlist só funciona com playlists suas por enquanto.
+    if "tracks" not in playlist:
+        raise SystemExit(
+            f"⛔ Não consigo ler as faixas de '{name}' — a Spotify só devolve os "
+            "itens completos de playlists que você é dono ou colaborador (restrição "
+            "deles desde fev/2026, não é bug daqui). Use uma playlist sua, ou clone a "
+            "playlist de terceiro pra sua conta antes de rodar o --playlist nela."
+        )
 
     tracks: list[Track] = []
     results = playlist["tracks"]
