@@ -57,9 +57,18 @@ def _human_time(seconds: float) -> str:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv or sys.argv[1:])
 
-    if not load_dotenv(args.env_file):
+    # override=True é de propósito: por padrão o load_dotenv NÃO sobrescreve
+    # uma variável já existente no ambiente. Sem isso, um SPOTIFY_CLIENT_ID
+    # deixado em alguma sessão de terminal anterior (ex.: um $env:... manual
+    # ao debugar) faria o --env-file ser ignorado em silêncio — o objetivo
+    # inteiro dessa flag é garantir determinismo sobre qual credencial é usada.
+    if not load_dotenv(args.env_file, override=True):
         print(f"⚠ Não achei o arquivo '{args.env_file}' (ou ele está vazio). "
               "Conferindo variáveis de ambiente já existentes no sistema, se houver.")
+
+    client_id = os.environ.get("SPOTIFY_CLIENT_ID", "")
+    shown = f"{client_id[:8]}…" if client_id else "(vazio!)"
+    print(f"🔑 Usando '{args.env_file}' — SPOTIFY_CLIENT_ID = {shown}")
 
     # Se --env-file for usado sem --account, cada arquivo de credenciais ganha
     # seu próprio cache de token por padrão (evita misturar login de apps
