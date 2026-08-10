@@ -87,8 +87,21 @@ sobrescrever o token da outra:
 python main.py --artist "Twenty One Pilots" --top 30 --dry-run --account conta2
 ```
 Lembrando: enquanto o app estiver em "Development Mode" no dashboard, cada
-conta usada aqui precisa estar em **Settings → Users and Access**, senão a
+conta usada aqui precisa estar em **Settings → User Management**, senão a
 autorização falha.
+
+**O rate limit da Spotify é por app (Client ID), não por conta** — confirmado
+na prática: duas contas diferentes autorizadas no mesmo app bateram no mesmo
+limite. Se isso acontecer e você não quiser esperar o `Retry-After` passar,
+crie um **segundo app** no dashboard (é gratuito, sem limite de quantos apps
+você pode ter) e use `--env-file` pra apontar pra ele:
+```bash
+copy .env.example .env.app2
+# edite .env.app2 com o Client ID/Secret do app novo
+python main.py --artist "Twenty One Pilots" --top 30 --dry-run --env-file .env.app2
+```
+Isso já separa o cache de login automaticamente (`.cache-flowlist-app2`), sem
+precisar passar `--account` também.
 
 Na primeira execução, o navegador abre pra você aprovar o app na sua
 conta Spotify (OAuth) — normal, é o mesmo fluxo de "logar com Spotify"

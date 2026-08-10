@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 .cache-flowlist*
 __pycache__/
 *.pyc

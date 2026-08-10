@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from dotenv import load_dotenv
@@ -30,6 +31,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Apelido pra guardar o login em cache separado (ex.: --account teste2), "
         "útil pra testar com mais de uma conta Spotify sem uma sobrescrever o token da outra",
     )
+    p.add_argument(
+        "--env-file",
+        default=".env",
+        help="Arquivo de credenciais a usar (padrão: .env). Útil pra alternar entre apps "
+        "diferentes do Spotify Developer Dashboard — cada um com seu próprio rate limit — "
+        "ex.: --env-file .env.app2",
+    )
     return p.parse_args(argv)
 
 
@@ -41,10 +49,20 @@ def _human_time(seconds: float) -> str:
 
 
 def main(argv: list[str] | None = None) -> None:
-    load_dotenv()
     args = parse_args(argv or sys.argv[1:])
 
-    sp = spotify_client.get_spotify_client(account=args.account)
+    if not load_dotenv(args.env_file):
+        print(f"⚠ Não achei o arquivo '{args.env_file}' (ou ele está vazio). "
+              "Conferindo variáveis de ambiente já existentes no sistema, se houver.")
+
+    # Se --env-file for usado sem --account, cada arquivo de credenciais ganha
+    # seu próprio cache de token por padrão (evita misturar login de apps
+    # diferentes, ex.: .env.app2 -> cache com o apelido "app2").
+    account = args.account
+    if not account and args.env_file != ".env":
+        stem = os.path.basename(args.env_file).removeprefix(".env").strip(".")
+        account = stem or None
+    sp = spotify_client.get_spotify_client(account=account)
 
     try:
         _run(sp, args)
