@@ -100,18 +100,23 @@ Lembrando: enquanto o app estiver em "Development Mode" no dashboard, cada
 conta usada aqui precisa estar em **Settings → User Management**, senão a
 autorização falha.
 
-**O rate limit da Spotify é por app (Client ID), não por conta** — confirmado
-na prática: duas contas diferentes autorizadas no mesmo app bateram no mesmo
-limite. Se isso acontecer e você não quiser esperar o `Retry-After` passar,
-crie um **segundo app** no dashboard (é gratuito, sem limite de quantos apps
-você pode ter) e use `--env-file` pra apontar pra ele:
-```bash
-copy .env.example .env.app2
-# edite .env.app2 com o Client ID/Secret do app novo
-python main.py --artist "Twenty One Pilots" --top 30 --dry-run --env-file .env.app2
-```
-Isso já separa o cache de login automaticamente (`.cache-flowlist-app2`), sem
-precisar passar `--account` também.
+**⚠️ CORREÇÃO (a versão anterior deste README estava errada nisso):**
+o rate limit severo (`Retry-After` de ~22-24h) parece seguir **a conta
+Spotify autenticada, não o app/Client ID**. Testado três vezes: três apps
+diferentes (Client IDs distintos, um deles nunca usado antes) autorizados
+pela mesma conta principal bateram no mesmo bloqueio de ~22h logo de cara.
+Ou seja: **criar um app novo NÃO reseta esse limite** — foi um conselho
+errado que dei antes e não funciona. `--env-file`/`--account` continuam
+úteis por outros motivos (testar OAuth com contas diferentes, não misturar
+tokens), mas não são workaround pra isso.
+
+Se isso acontecer, as opções reais são:
+1. Esperar o tempo do `Retry-After` passar nessa conta.
+2. Testar com uma conta Spotify genuinamente nova, que nunca autorizou
+   nenhum dos seus apps de teste ainda (não confirmado que isso reseta o
+   limite, mas é a única variável que não testamos).
+
+Não fica criando app atrás de app — não ajuda e só gasta seu tempo.
 
 Na primeira execução, o navegador abre pra você aprovar o app na sua
 conta Spotify (OAuth) — normal, é o mesmo fluxo de "logar com Spotify"
@@ -151,9 +156,12 @@ No **Spotify desktop**:
   novo; o `cli.py` desliga isso (`status_retries=0`) e falha na hora com
   uma mensagem clara em vez de travar o programa o dia todo. Se isso
   acontecer, espere o tempo indicado antes de rodar de novo — não é bug,
-  é o limite da própria Spotify. Confirmado que é **por app (Client ID)**,
-  não por conta — trocar de conta Spotify não ajuda, só `--env-file`
-  apontando pra outro Client ID (veja acima).
+  é o limite da própria Spotify. **Parece seguir a conta autenticada, não
+  o app/Client ID** — três apps diferentes (Client IDs distintos) na mesma
+  conta bateram no mesmo bloqueio de ~22h logo de cara, então criar um app
+  novo não é workaround (veja a seção de uso, mais acima, com o detalhe
+  completo — inclusive a correção de uma versão anterior deste README que
+  dizia o contrário).
 - **Criar playlist dava 403:** a Spotify descontinuou `POST /users/{id}/playlists`
   na mesma migração de fev/2026 (esse é o endpoint que o método
   `user_playlist_create` do spotipy usa por baixo). O código já usa o
