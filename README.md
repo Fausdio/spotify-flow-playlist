@@ -80,6 +80,16 @@ python main.py --artist "Twenty One Pilots" --top 30 --use-getsongbpm
 
 Outras opções: `--name "Nome da playlist"`, `--public` (padrão é privada).
 
+Testando com mais de uma conta Spotify? Use `--account apelido` pra cada
+uma guardar seu próprio login em cache (`.cache-flowlist-apelido`), sem uma
+sobrescrever o token da outra:
+```bash
+python main.py --artist "Twenty One Pilots" --top 30 --dry-run --account conta2
+```
+Lembrando: enquanto o app estiver em "Development Mode" no dashboard, cada
+conta usada aqui precisa estar em **Settings → Users and Access**, senão a
+autorização falha.
+
 Na primeira execução, o navegador abre pra você aprovar o app na sua
 conta Spotify (OAuth) — normal, é o mesmo fluxo de "logar com Spotify"
 de qualquer app de terceiros. O token fica salvo em `.cache-flowlist`

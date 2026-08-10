@@ -25,6 +25,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--use-getsongbpm", action="store_true",
                     help="Se a Spotify bloquear audio-features, tenta completar via getsongbpm.com (precisa de API key no .env)")
     p.add_argument("--debug-bpm", action="store_true", help="Mostra as respostas cruas da API de BPM")
+    p.add_argument(
+        "--account",
+        help="Apelido pra guardar o login em cache separado (ex.: --account teste2), "
+        "útil pra testar com mais de uma conta Spotify sem uma sobrescrever o token da outra",
+    )
     return p.parse_args(argv)
 
 
@@ -39,7 +44,7 @@ def main(argv: list[str] | None = None) -> None:
     load_dotenv()
     args = parse_args(argv or sys.argv[1:])
 
-    sp = spotify_client.get_spotify_client()
+    sp = spotify_client.get_spotify_client(account=args.account)
 
     try:
         _run(sp, args)

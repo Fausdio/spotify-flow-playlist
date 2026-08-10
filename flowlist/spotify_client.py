@@ -34,11 +34,17 @@ def normalize_title(title: str) -> str:
     return base
 
 
-def get_spotify_client() -> spotipy.Spotify:
+def get_spotify_client(account: str | None = None) -> spotipy.Spotify:
     """Autentica via OAuth (Authorization Code Flow) usando credenciais do .env.
 
-    Na primeira execução abre o navegador para você aprovar o app na sua
-    própria conta Spotify. O token fica cacheado localmente (.cache-flowlist).
+    Na primeira execução (por conta) abre o navegador pra você aprovar o app.
+    O token fica cacheado localmente em `.cache-flowlist` — ou
+    `.cache-flowlist-<account>` se você passar `--account nome` no CLI, pra
+    testar com mais de uma conta Spotify sem elas se sobrescreverem.
+
+    Lembrete: enquanto o app estiver em "Development Mode" no dashboard da
+    Spotify, cada conta usada aqui precisa estar cadastrada em
+    Settings -> Users and Access, senão a autorização falha.
     """
     client_id = os.environ.get("SPOTIFY_CLIENT_ID")
     client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET")
@@ -50,12 +56,14 @@ def get_spotify_client() -> spotipy.Spotify:
             "Veja o README.md -> 'Configuração' para criar seu app gratuito."
         )
 
+    cache_path = f".cache-flowlist-{account}" if account else ".cache-flowlist"
+
     auth_manager = SpotifyOAuth(
         client_id=client_id,
         client_secret=client_secret,
         redirect_uri=redirect_uri,
         scope=SCOPES,
-        cache_path=".cache-flowlist",
+        cache_path=cache_path,
         open_browser=True,
     )
     # status_retries=0 é de propósito: o padrão do spotipy, ao levar um 429,
