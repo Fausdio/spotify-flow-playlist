@@ -74,6 +74,15 @@ Só ver a ordem sugerida sem criar nada na sua conta ainda:
 python main.py --artist "Twenty One Pilots" --top 30 --dry-run
 ```
 
+A primeira busca de cada artista/playlist fica em cache local
+(`.cache-tracks-<nome>.json`, git-ignorado) — reruns seguintes (trocar
+`--use-getsongbpm`, testar `--dry-run` de novo, etc.) reusam esse cache em
+vez de gastar a cota da Spotify de novo. Use `--refresh-cache` se quiser
+forçar uma busca nova:
+```bash
+python main.py --artist "Twenty One Pilots" --top 30 --refresh-cache
+```
+
 Com fallback de BPM via getsongbpm.com:
 ```bash
 python main.py --artist "Twenty One Pilots" --top 30 --use-getsongbpm
