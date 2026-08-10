@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass, field
 
 import spotipy
@@ -16,6 +17,12 @@ from spotipy import SpotifyException
 from spotipy.oauth2 import SpotifyOAuth
 
 SCOPES = "playlist-modify-public playlist-modify-private playlist-read-private"
+
+# Sem lote, get_artist_best_tracks dispara uma chamada por álbum e uma por
+# faixa em sequência — sem pausa nenhuma, isso estoura o limite de rajada
+# da Spotify (janela curta) mesmo num app novinho, antes de chegar perto de
+# qualquer limite diário. Esse intervalo mantém o ritmo bem abaixo disso.
+_REQUEST_DELAY = 0.15
 
 # Sufixos comuns de versões alternativas, usados só para deduplicar
 # (ex.: não colocar "Stressed Out" e "Stressed Out - Live" duas vezes).
@@ -144,6 +151,7 @@ def get_artist_best_tracks(sp: spotipy.Spotify, artist_name: str, top_n: int) ->
         while page:
             track_ids.extend(t["id"] for t in page["items"] if t and t.get("id"))
             page = sp.next(page) if page.get("next") else None
+        time.sleep(_REQUEST_DELAY)
 
     print(
         f"{len(album_ids)} álbuns/singles, {len(track_ids)} faixas encontradas. "
@@ -154,9 +162,16 @@ def get_artist_best_tracks(sp: spotipy.Spotify, artist_name: str, top_n: int) ->
         try:
             full_tracks.append(sp.track(tid))
         except SpotifyException as e:
+            if e.http_status == 429:
+                # Insistir só pioraria (cada tentativa reforça o backoff do
+                # lado da Spotify). Para aqui com o que já foi buscado, em
+                # vez de martelar as ~centenas de faixas restantes.
+                print(f"  ⛔ rate limit no meio da busca ({i}/{len(track_ids)} faixas obtidas). Parando.")
+                raise
             print(f"  ⚠ falhou ao buscar uma faixa: {e}")
         if i % 25 == 0 or i == len(track_ids):
             print(f"  ... {i}/{len(track_ids)}")
+        time.sleep(_REQUEST_DELAY)
 
     # Deduplica por título normalizado. Prioridade: 1) versão "limpa" (sem
     # sufixo de live/remix/etc.) sempre que ela existir, 2) maior popularidade
