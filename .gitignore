@@ -2,5 +2,6 @@
 .env.*
 !.env.example
 .cache-flowlist*
+.cache-tracks-*.json
 __pycache__/
 *.pyc

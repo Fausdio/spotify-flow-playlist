@@ -7,7 +7,7 @@ import sys
 from dotenv import load_dotenv
 from spotipy import SpotifyException
 
-from . import enrichment, ordering, spotify_client
+from . import enrichment, ordering, spotify_client, track_cache
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -26,6 +26,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--use-getsongbpm", action="store_true",
                     help="Se a Spotify bloquear audio-features, tenta completar via getsongbpm.com (precisa de API key no .env)")
     p.add_argument("--debug-bpm", action="store_true", help="Mostra as respostas cruas da API de BPM")
+    p.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Ignora o cache local de faixas desse artista/playlist e busca tudo de novo na "
+        "Spotify (o padrão é reusar o cache pra economizar chamadas e não bater rate limit)",
+    )
     p.add_argument(
         "--account",
         help="Apelido pra guardar o login em cache separado (ex.: --account teste2), "
@@ -80,12 +86,23 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _run(sp, args: argparse.Namespace) -> None:
-    if args.artist:
+    cache_key = args.artist or spotify_client.extract_playlist_id(args.playlist)
+    cached = None if args.refresh_cache else track_cache.load(cache_key)
+
+    source_name: str | None = None  # nome original da playlist, quando aplicável
+    if cached:
+        tracks, source_name = cached
+        print(
+            f"📦 Usando {len(tracks)} faixas do cache local de '{cache_key}' — nenhuma "
+            "chamada à Spotify feita pra buscar faixas dessa vez. Use --refresh-cache "
+            "se quiser forçar uma busca nova (ex.: a discografia mudou)."
+        )
+    elif args.artist:
         tracks = spotify_client.get_artist_best_tracks(sp, args.artist, args.top)
-        default_name = f"{args.artist} — Non-Stop Mix"
     else:
-        tracks, original_name = spotify_client.get_playlist_tracks(sp, args.playlist)
-        default_name = f"{original_name} (Flow Remix)"
+        tracks, source_name = spotify_client.get_playlist_tracks(sp, args.playlist)
+
+    default_name = f"{args.artist} — Non-Stop Mix" if args.artist else f"{source_name} (Flow Remix)"
 
     if not tracks:
         raise SystemExit("Nenhuma faixa encontrada. Confira o nome do artista / URL da playlist.")
@@ -94,6 +111,11 @@ def _run(sp, args: argparse.Namespace) -> None:
     if not got_spotify_features and args.use_getsongbpm:
         filled = enrichment.enrich_with_getsongbpm(tracks, debug=args.debug_bpm)
         print(f"getsongbpm.com completou {filled}/{len(tracks)} faixas.")
+
+    # Salva (ou atualiza) o cache já com tempo/key preenchidos quando possível
+    # — assim a próxima rodada (trocar fonte de BPM, reordenar, etc.) não
+    # paga o custo de buscar tudo de novo na Spotify.
+    track_cache.save(cache_key, tracks, source_name=source_name)
 
     ordered = ordering.build_flow(tracks)
     ordering.print_flow_report(ordered)
