@@ -98,6 +98,21 @@ No **Spotify desktop**:
 
 - **audio-features da Spotify:** bloqueado por padrão pra apps novos
   desde nov/2024. O programa detecta e avisa; não é bug.
+- **Endpoints "vários de uma vez" (`GET /v1/albums?ids=`, `GET /v1/tracks?ids=`):**
+  também voltam 403 pra apps novos, mesmo pedindo 1 ID só — confirmado
+  testando na prática. Por isso `get_artist_best_tracks` busca álbum por
+  álbum e faixa por faixa (mais lento, mas funciona).
+- **`artist_albums(..., limit=...)`:** o limite documentado é 50, mas na
+  prática qualquer valor acima de 10 dá 400 "Invalid limit" pra apps
+  novos. O código já usa `limit=10`.
+- **Rate limit:** apps novos levam rate limit bem mais cedo que o
+  esperado — em teste, uma sequência de chamadas (inclusive as de
+  diagnóstico acima) resultou num `Retry-After` de ~23h. O spotipy por
+  padrão **dorme esse tempo inteiro em silêncio** antes de tentar de
+  novo; o `cli.py` desliga isso (`status_retries=0`) e falha na hora com
+  uma mensagem clara em vez de travar o programa o dia todo. Se isso
+  acontecer, espere o tempo indicado antes de rodar de novo — não é bug,
+  é o limite da própria Spotify.
 - **getsongbpm.com (fallback):** é uma API pública de terceiros, os
   nomes exatos dos campos podem variar por conta. Rode com `--debug-bpm`
   pra ver a resposta crua se os dados vierem estranhos, e ajuste
