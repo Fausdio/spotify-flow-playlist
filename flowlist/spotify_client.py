@@ -213,8 +213,11 @@ def get_playlist_tracks(sp: spotipy.Spotify, playlist_url_or_id: str) -> tuple[l
 def create_playlist(
     sp: spotipy.Spotify, name: str, description: str, uris: list[str], public: bool = False
 ) -> str:
-    user_id = sp.current_user()["id"]
-    playlist = sp.user_playlist_create(user_id, name, public=public, description=description)
+    # current_user_playlist_create -> POST /v1/me/playlists. NÃO usar
+    # user_playlist_create (POST /v1/users/{id}/playlists): a Spotify
+    # descontinuou esse endpoint na migração de fev/2026 e, desde 09/mar/2026,
+    # ele só devolve 403 — confirmado testando na prática.
+    playlist = sp.current_user_playlist_create(name, public=public, description=description)
     for i in range(0, len(uris), 100):  # add_items aceita no máx. 100 por chamada
         sp.playlist_add_items(playlist["id"], uris[i : i + 100])
     return playlist["external_urls"]["spotify"]
