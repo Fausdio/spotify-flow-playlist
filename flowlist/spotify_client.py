@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 
 import spotipy
+from spotipy import SpotifyException
 from spotipy.oauth2 import SpotifyOAuth
 
 SCOPES = "playlist-modify-public playlist-modify-private playlist-read-private"
@@ -57,7 +58,12 @@ def get_spotify_client() -> spotipy.Spotify:
         cache_path=".cache-flowlist",
         open_browser=True,
     )
-    return spotipy.Spotify(auth_manager=auth_manager)
+    # status_retries=0 é de propósito: o padrão do spotipy, ao levar um 429,
+    # DORME o tempo exato que o header Retry-After mandar antes de tentar de
+    # novo — e a Spotify já mandou valores de mais de 20 HORAS pra esse tipo
+    # de app. Preferível falhar na hora com uma mensagem clara (ver cli.py)
+    # do que o programa travar em silêncio o dia inteiro.
+    return spotipy.Spotify(auth_manager=auth_manager, retries=1, status_retries=0)
 
 
 @dataclass
@@ -103,12 +109,18 @@ def get_artist_best_tracks(sp: spotipy.Spotify, artist_name: str, top_n: int) ->
     """Varre toda a discografia (álbuns + singles), remove versões duplicadas
     e devolve as `top_n` faixas de maior popularidade — cobrindo a carreira
     inteira, não só o Top 10 (que é o limite do endpoint artist-top-tracks).
+
+    Nota: os endpoints "vários de uma vez" (`/v1/albums?ids=`, `/v1/tracks?ids=`)
+    voltam 403 pra apps novos (mesma família de restrição do audio-features).
+    Então isso busca álbum por álbum e faixa por faixa — mais lento, mas é o
+    que de fato funciona hoje. Também: `artist_albums` só aceita limit<=10
+    pra esses apps (o documentado é 50); usar mais que isso também dá 400.
     """
     artist_id, artist_name_resolved = find_artist_id(sp, artist_name)
 
     album_ids: list[str] = []
     seen_album_names: set[str] = set()
-    results = sp.artist_albums(artist_id, album_type="album,single", country="US", limit=50)
+    results = sp.artist_albums(artist_id, include_groups="album,single", country="US", limit=10)
     while results:
         for album in results["items"]:
             key = normalize_title(album["name"])
@@ -119,24 +131,48 @@ def get_artist_best_tracks(sp: spotipy.Spotify, artist_name: str, top_n: int) ->
         results = sp.next(results) if results.get("next") else None
 
     track_ids: list[str] = []
-    for i in range(0, len(album_ids), 20):  # album_tracks não é batch; sp.albums sim
-        for album in sp.albums(album_ids[i : i + 20])["albums"]:
-            for t in album["tracks"]["items"]:
-                track_ids.append(t["id"])
+    for album_id in album_ids:
+        page = sp.album_tracks(album_id, limit=50)
+        while page:
+            track_ids.extend(t["id"] for t in page["items"] if t and t.get("id"))
+            page = sp.next(page) if page.get("next") else None
 
+    print(
+        f"{len(album_ids)} álbuns/singles, {len(track_ids)} faixas encontradas. "
+        "Buscando detalhes uma a uma (a API deste app não permite busca em lote)..."
+    )
     full_tracks: list[dict] = []
-    for i in range(0, len(track_ids), 50):
-        batch = sp.tracks(track_ids[i : i + 50])["tracks"]
-        full_tracks.extend(t for t in batch if t)
+    for i, tid in enumerate(track_ids, 1):
+        try:
+            full_tracks.append(sp.track(tid))
+        except SpotifyException as e:
+            print(f"  ⚠ falhou ao buscar uma faixa: {e}")
+        if i % 25 == 0 or i == len(track_ids):
+            print(f"  ... {i}/{len(track_ids)}")
 
-    # deduplica por título normalizado, mantendo a versão mais popular
+    # Deduplica por título normalizado. Prioridade: 1) versão "limpa" (sem
+    # sufixo de live/remix/etc.) sempre que ela existir, 2) maior popularidade
+    # como desempate. Sem isso, um álbum ao vivo recém-lançado (que ganha um
+    # boost de popularidade só por ser novo) atropelava as faixas de estúdio
+    # clássicas na hora de escolher as "melhores" — não é isso que se espera
+    # de um "melhores da discografia".
+    def _is_clean(t: dict) -> bool:
+        return t["name"].strip().lower() == normalize_title(t["name"])
+
     best_by_title: dict[str, dict] = {}
     for t in full_tracks:
         key = normalize_title(t["name"])
-        if key not in best_by_title or t["popularity"] > best_by_title[key]["popularity"]:
+        current = best_by_title.get(key)
+        if current is None:
+            best_by_title[key] = t
+            continue
+        t_clean, cur_clean = _is_clean(t), _is_clean(current)
+        if t_clean and not cur_clean:
+            best_by_title[key] = t
+        elif t_clean == cur_clean and t.get("popularity", 0) > current.get("popularity", 0):
             best_by_title[key] = t
 
-    ranked = sorted(best_by_title.values(), key=lambda t: t["popularity"], reverse=True)
+    ranked = sorted(best_by_title.values(), key=lambda t: t.get("popularity", 0), reverse=True)
     chosen = ranked[:top_n]
     print(f"Artista: {artist_name_resolved} — {len(best_by_title)} faixas únicas encontradas, "
           f"selecionadas as {len(chosen)} mais populares.")

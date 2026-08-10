@@ -4,6 +4,7 @@ import argparse
 import sys
 
 from dotenv import load_dotenv
+from spotipy import SpotifyException
 
 from . import enrichment, ordering, spotify_client
 
@@ -27,12 +28,35 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _human_time(seconds: float) -> str:
+    minutes = seconds / 60
+    if minutes < 90:
+        return f"~{minutes:.0f} min"
+    return f"~{minutes / 60:.1f} h"
+
+
 def main(argv: list[str] | None = None) -> None:
     load_dotenv()
     args = parse_args(argv or sys.argv[1:])
 
     sp = spotify_client.get_spotify_client()
 
+    try:
+        _run(sp, args)
+    except SpotifyException as e:
+        if e.http_status == 429:
+            wait = e.headers.get("Retry-After")
+            wait_str = f" (a Spotify pediu pra esperar {_human_time(float(wait))})" if wait else ""
+            raise SystemExit(
+                f"⛔ Rate limit da Spotify atingido pra este app{wait_str}.\n"
+                "Isso não é erro do programa — é um limite da própria Spotify pra apps novos "
+                "(bem mais apertado que o documentado). Espera um pouco e roda de novo; "
+                "evite rodar em sequência rápida enquanto estiver testando."
+            ) from None
+        raise
+
+
+def _run(sp, args: argparse.Namespace) -> None:
     if args.artist:
         tracks = spotify_client.get_artist_best_tracks(sp, args.artist, args.top)
         default_name = f"{args.artist} — Non-Stop Mix"
