@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import spotipy
 from spotipy import SpotifyException
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
 
 SCOPES = "playlist-modify-public playlist-modify-private playlist-read-private"
 
@@ -78,6 +78,28 @@ def get_spotify_client(account: str | None = None) -> spotipy.Spotify:
     # novo — e a Spotify já mandou valores de mais de 20 HORAS pra esse tipo
     # de app. Preferível falhar na hora com uma mensagem clara (ver cli.py)
     # do que o programa travar em silêncio o dia inteiro.
+    return spotipy.Spotify(auth_manager=auth_manager, retries=1, status_retries=0)
+
+
+def get_catalog_client() -> spotipy.Spotify:
+    """Client Credentials Flow: só Client ID/Secret, sem login de usuário
+    nenhum. Só alcança dados públicos de catálogo (busca, álbum, faixa) —
+    nada de playlists, biblioteca ou qualquer coisa específica de usuário.
+
+    Existe porque o rate limit severo que vimos na prática parece seguir a
+    CONTA autenticada (mesmo bloqueio em Client IDs diferentes, mesma
+    conta) — e aqui não tem conta nenhuma no meio, então é bem provável que
+    escape desse limite. Útil pra buscar/cachear faixas sem depender de
+    login enquanto uma conta está bloqueada. Não serve pra criar playlist.
+    """
+    client_id = os.environ.get("SPOTIFY_CLIENT_ID")
+    client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise SystemExit(
+            "Faltam SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET no .env.\n"
+            "Veja o README.md -> 'Configuração' para criar seu app gratuito."
+        )
+    auth_manager = SpotifyClientCredentials(client_id=client_id, client_secret=client_secret)
     return spotipy.Spotify(auth_manager=auth_manager, retries=1, status_retries=0)
 
 

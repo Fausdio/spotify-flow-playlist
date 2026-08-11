@@ -1,15 +1,29 @@
 # spotify-flow-playlist
 
-Cria (ou remixa) playlists do Spotify ordenadas como um set de DJ — BPM
-vizinho e tom compatível — pra soar como uma faixa contínua quando você
-ativa o **Crossfade + Automix** no Spotify desktop.
+Monta playlists com as melhores músicas da discografia inteira de um
+artista (não só o Top 10) — algo que o Spotify não faz nativamente.
 
 Funciona para **qualquer artista** ou **qualquer playlist sua** (dona ou
 colaborador — veja a limitação do `--playlist` mais abaixo).
 
-Dados de BPM/tom, quando não disponíveis via Spotify, são complementados
-opcionalmente pela API pública da [GetSongBPM.com](https://getsongbpm.com/) —
-usada aqui via `--use-getsongbpm`. 🔗 Powered by [GetSongBPM.com](https://getsongbpm.com/).
+## ⚠️ Atualize isto antes de usar: a Spotify já resolveu a parte de mixagem
+
+Este projeto nasceu tentando ordenar faixas por BPM/tom na unha (via API
+externa, com todos os workarounds documentados mais abaixo) pra imitar um
+mix de DJ. **Isso ficou obsoleto**: a Spotify lançou um recurso nativo,
+**Mixar** (toolbar de qualquer playlist, conta Premium), que faz isso de
+verdade — transições reais de áudio (volume, EQ, efeitos), com **Smart
+Reorder** reorganizando automaticamente por BPM e tom usando os dados de
+análise de áudio da própria Spotify (sem rate limit de API de terceiro
+nenhum). Veja https://support.spotify.com/us/article/mixed-playlists/.
+
+**Ou seja:** crie a playlist com este programa (ele resolve bem o "achar as
+melhores músicas de toda a discografia"), depois abra ela no Spotify
+desktop e toque **Mixar → Editar → Smart Reorder**. Pronto — não precisa
+de `--use-getsongbpm`, `ordering.py` nem nada disso pra ter a mixagem em
+si; esse código continua aqui só como fallback pra quando a ordem importa
+antes de tocar (ex.: nomear a playlist já em ordem) ou pra quem não tem
+Premium.
 
 ## Por que não é um bot clicando no navegador?
 
