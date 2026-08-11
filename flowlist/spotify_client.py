@@ -133,12 +133,29 @@ def _track_from_full_object(t: dict) -> Track:
 
 
 def find_artist_id(sp: spotipy.Spotify, artist_name: str) -> tuple[str, str]:
-    result = sp.search(q=f"artist:{artist_name}", type="artist", limit=5)
+    result = sp.search(q=f"artist:{artist_name}", type="artist", limit=10)
     items = result["artists"]["items"]
     if not items:
         raise SystemExit(f"Nenhum artista encontrado para '{artist_name}'.")
-    # heurística simples: pega o de maior "followers" entre os primeiros resultados
-    best = max(items, key=lambda a: a.get("followers", {}).get("total", 0))
+
+    # Nem busca nem lookup individual de artista trazem 'followers'/
+    # 'popularity' pra esse tipo de app (restrição descoberta na prática,
+    # não documentada) — então "pegar o mais seguido" nunca funcionou de
+    # verdade, sempre caía no primeiro resultado da busca, às vezes um
+    # artista errado/obscuro com nome parecido. Prioriza nome exatamente
+    # igual ao pedido (sem diferenciar maiúscula/minúscula); só cai pro
+    # primeiro resultado (ordem de relevância da própria Spotify) se
+    # nenhum bater exato.
+    query = artist_name.strip().casefold()
+    exact = [a for a in items if a["name"].strip().casefold() == query]
+    best = exact[0] if exact else items[0]
+    if not exact and len(items) > 1:
+        others = ", ".join(a["name"] for a in items[1:4])
+        print(
+            f"⚠ Nenhum artista chamado exatamente '{artist_name}' — usando "
+            f"'{best['name']}' (resultado mais relevante da busca). Outras opções "
+            f"encontradas: {others}. Se não for o artista certo, use o nome exato."
+        )
     return best["id"], best["name"]
 
 
