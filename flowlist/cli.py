@@ -113,31 +113,40 @@ def _run(sp, args: argparse.Namespace) -> None:
 
     source_name: str | None = None  # nome original da playlist, quando aplicável
     if cached:
-        tracks, source_name = cached
+        pool, source_name = cached
         print(
-            f"📦 Usando {len(tracks)} faixas do cache local de '{cache_key}' — nenhuma "
+            f"📦 Usando {len(pool)} faixas do cache local de '{cache_key}' — nenhuma "
             "chamada à Spotify feita pra buscar faixas dessa vez. Use --refresh-cache "
             "se quiser forçar uma busca nova (ex.: a discografia mudou)."
         )
     elif args.artist:
-        tracks = spotify_client.get_artist_best_tracks(sp, args.artist, args.top)
+        pool = spotify_client.get_artist_best_tracks(sp, args.artist)
     else:
-        tracks, source_name = spotify_client.get_playlist_tracks(sp, args.playlist)
+        pool, source_name = spotify_client.get_playlist_tracks(sp, args.playlist)
 
-    default_name = f"{args.artist} — Non-Stop Mix" if args.artist else f"{source_name} (Flow Remix)"
-
-    if not tracks:
+    if not pool:
         raise SystemExit("Nenhuma faixa encontrada. Confira o nome do artista / URL da playlist.")
 
-    got_spotify_features = enrichment.enrich_with_spotify_audio_features(sp, tracks)
+    got_spotify_features = enrichment.enrich_with_spotify_audio_features(sp, pool)
     if not got_spotify_features and args.use_getsongbpm:
-        filled = enrichment.enrich_with_getsongbpm(tracks, debug=args.debug_bpm)
-        print(f"getsongbpm.com completou {filled}/{len(tracks)} faixas.")
+        filled = enrichment.enrich_with_getsongbpm(pool, debug=args.debug_bpm)
+        print(f"getsongbpm.com completou {filled}/{len(pool)} faixas.")
 
-    # Salva (ou atualiza) o cache já com tempo/key preenchidos quando possível
-    # — assim a próxima rodada (trocar fonte de BPM, reordenar, etc.) não
-    # paga o custo de buscar tudo de novo na Spotify.
-    track_cache.save(cache_key, tracks, source_name=source_name)
+    # Salva o POOL INTEIRO (não cortado por --top), já com tempo/key quando
+    # possível. Cortar antes de salvar foi um bug real: um cache gravado com
+    # --top 50 ficava travado em 50 faixas pra sempre, ignorando qualquer
+    # --top maior pedido depois. Salvando o pool cheio, qualquer --top (até
+    # o tamanho da discografia) pode reusar o mesmo cache.
+    track_cache.save(cache_key, pool, source_name=source_name)
+
+    # --top só faz sentido com --artist (get_playlist_tracks já traz a
+    # playlist inteira, que é o que a pessoa pediu pra remixar).
+    tracks = pool
+    if args.artist and len(pool) > args.top:
+        print(f"Usando as {args.top} mais populares de {len(pool)} faixas disponíveis.")
+        tracks = pool[: args.top]
+
+    default_name = f"{args.artist} — Non-Stop Mix" if args.artist else f"{source_name} (Flow Remix)"
 
     ordered = ordering.build_flow(tracks)
     ordering.print_flow_report(ordered)

@@ -142,10 +142,14 @@ def find_artist_id(sp: spotipy.Spotify, artist_name: str) -> tuple[str, str]:
     return best["id"], best["name"]
 
 
-def get_artist_best_tracks(sp: spotipy.Spotify, artist_name: str, top_n: int) -> list[Track]:
+def get_artist_best_tracks(sp: spotipy.Spotify, artist_name: str) -> list[Track]:
     """Varre toda a discografia (álbuns + singles), remove versões duplicadas
-    e devolve as `top_n` faixas de maior popularidade — cobrindo a carreira
-    inteira, não só o Top 10 (que é o limite do endpoint artist-top-tracks).
+    e devolve TODAS as faixas únicas, ordenadas da mais pra menos popular —
+    cobrindo a carreira inteira, não só o Top 10 (limite do endpoint
+    artist-top-tracks). Quem decide quantas usar é quem chama (cli.py, via
+    --top), aplicado DEPOIS — inclusive em cima do cache. Cortar aqui dentro
+    já causou bug: um cache salvo com --top 50 ficava travado em 50 faixas
+    pra sempre, mesmo pedindo --top 100 depois.
 
     Nota: os endpoints "vários de uma vez" (`/v1/albums?ids=`, `/v1/tracks?ids=`)
     voltam 403 pra apps novos (mesma família de restrição do audio-features).
@@ -218,10 +222,8 @@ def get_artist_best_tracks(sp: spotipy.Spotify, artist_name: str, top_n: int) ->
             best_by_title[key] = t
 
     ranked = sorted(best_by_title.values(), key=lambda t: t.get("popularity", 0), reverse=True)
-    chosen = ranked[:top_n]
-    print(f"Artista: {artist_name_resolved} — {len(best_by_title)} faixas únicas encontradas, "
-          f"selecionadas as {len(chosen)} mais populares.")
-    return [_track_from_full_object(t) for t in chosen]
+    print(f"Artista: {artist_name_resolved} — {len(ranked)} faixas únicas encontradas no total.")
+    return [_track_from_full_object(t) for t in ranked]
 
 
 def extract_playlist_id(playlist_url_or_id: str) -> str:
