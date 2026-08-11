@@ -12,12 +12,15 @@ import contextlib
 import io
 import queue
 import threading
+import time
 import tkinter as tk
+import webbrowser
 from tkinter import messagebox, ttk
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from spotipy import SpotifyException
-from spotipy.oauth2 import SpotifyOauthError
+from spotipy.oauth2 import SpotifyOauthError, start_local_http_server
 
 from . import config, errors, pipeline, spotify_client
 from .enrichment import key_mode_to_camelot
@@ -28,44 +31,73 @@ LOGIN_TIMEOUT_SECONDS = 120
 
 
 def _get_authorized_client(account: str | None):
-    """Autentica com um timeout de verdade.
+    """Autentica com um timeout de verdade, na ORDEM certa.
 
-    O spotipy, sem token em cache, abre um mini-servidor local e ESPERA PRA
-    SEMPRE a resposta do navegador — se `webbrowser.open()` falhar ou abrir
-    sem foco (acontece), trava em silêncio, sem exceção nem log nenhum
-    (o erro dela vai por `logging`, não por print, e nem por aí a GUI
-    percebe). Aqui a autenticação roda numa sub-thread com timeout; se não
-    voltar a tempo, a GUI recupera o controle e mostra a URL pra abrir na
-    mão em vez de ficar "Rodando…" pra sempre sem explicação.
+    O spotipy, sem token em cache, abre um mini-servidor local (127.0.0.1:porta)
+    e ESPERA PRA SEMPRE a resposta do navegador — sem timeout nenhum. Pior:
+    se a URL de login for aberta/usada ANTES desse servidor terminar de
+    subir, o navegador recebe "conexão recusada" na hora do redirect de
+    volta (aconteceu na prática). Por isso aqui a ordem é sempre: 1) abrir
+    a porta e confirmar que está de pé, 2) só então gerar/mostrar/abrir a
+    URL, 3) esperar UMA requisição com timeout nativo do servidor (sem
+    precisar de thread aninhada nem truque nenhum).
     """
     sp = spotify_client.get_spotify_client(account=account)
-    auth_url = sp.auth_manager.get_authorize_url()
-    print(
-        f"🌐 Se o navegador não abrir sozinho em alguns segundos, copie e cole esta "
-        f"URL nele pra fazer login:\n   {auth_url}\n"
-    )
+    auth_manager = sp.auth_manager
 
-    result: dict = {}
+    cached = auth_manager.validate_token(auth_manager.cache_handler.get_cached_token())
+    if cached is not None:
+        return sp  # token em cache já é válido (ou foi renovado agora) — sem navegador
 
-    def _touch() -> None:
+    redirect = urlparse(auth_manager.redirect_uri)
+    if redirect.hostname not in ("127.0.0.1", "localhost") or not redirect.port:
+        # Redirect URI fora do padrão local — deixa o spotipy tentar do
+        # jeito dele (sem o nosso timeout, mas também sem essa suposição).
+        sp.current_user()
+        return sp
+
+    server = start_local_http_server(redirect.port)
+    try:
+        auth_url = auth_manager.get_authorize_url()
+        print(f"🌐 Abrindo o navegador pra você fazer login e autorizar o app…")
         try:
-            sp.current_user()  # chamada pequena só pra forçar o login agora
-            result["ok"] = True
-        except Exception as e:  # noqa: BLE001
-            result["error"] = e
-
-    t = threading.Thread(target=_touch, daemon=True)
-    t.start()
-    t.join(timeout=LOGIN_TIMEOUT_SECONDS)
-    if t.is_alive():
-        raise TimeoutError(
-            f"O login não foi concluído em {LOGIN_TIMEOUT_SECONDS}s. Confira se um "
-            "navegador abriu (às vezes abre atrás de outras janelas — olha a barra de "
-            "tarefas) e faça login/autorize lá. Se nada abriu, copie a URL impressa no "
-            "log acima e cole no navegador na mão."
+            webbrowser.open(auth_url)
+        except webbrowser.Error:
+            pass
+        print(
+            f"   Se não abrir sozinho em alguns segundos, copie e cole esta URL "
+            f"num navegador:\n   {auth_url}\n"
         )
-    if "error" in result:
-        raise result["error"]
+
+        # handle_request() atende UMA conexão só, seja ela o redirect de
+        # verdade do Spotify ou qualquer outra coisa que bata na porta antes
+        # (um antivírus sondando, um pré-fetch do navegador, etc. — "conexão
+        # recusada" no redirect real bateu na prática, e é exatamente esse o
+        # jeito disso acontecer: a primeira conexão "gasta" o servidor e ele
+        # fecha antes da resposta certa chegar). Por isso: chama em loop até
+        # vir um auth_code de verdade ou o prazo total acabar, em vez de
+        # confiar que a primeira conexão é a certa.
+        deadline = time.monotonic() + LOGIN_TIMEOUT_SECONDS
+        while server.auth_code is None and server.error is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            server.timeout = min(5, remaining)
+            server.handle_request()
+
+        if server.error is not None:
+            raise server.error
+        if server.auth_code is None:
+            raise TimeoutError(
+                f"O login não foi concluído em {LOGIN_TIMEOUT_SECONDS}s. Confira se um "
+                "navegador abriu (às vezes abre atrás de outras janelas — olha a barra "
+                "de tarefas) e faça login/autorize lá, ou copie a URL impressa acima e "
+                "cole no navegador na mão, depois tente de novo."
+            )
+        auth_manager.get_access_token(server.auth_code, check_cache=False)
+    finally:
+        server.server_close()  # libera a porta na hora, sem depender de GC/timeout de SO
+
     return sp
 
 
