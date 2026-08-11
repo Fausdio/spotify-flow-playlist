@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from spotipy import SpotifyException
 from spotipy.oauth2 import SpotifyOauthError
 
-from . import enrichment, ordering, spotify_client, track_cache
+from . import config, errors, pipeline, spotify_client
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -48,13 +48,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def _human_time(seconds: float) -> str:
-    minutes = seconds / 60
-    if minutes < 90:
-        return f"~{minutes:.0f} min"
-    return f"~{minutes / 60:.1f} h"
-
-
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv or sys.argv[1:])
 
@@ -71,105 +64,28 @@ def main(argv: list[str] | None = None) -> None:
     shown = f"{client_id[:8]}…" if client_id else "(vazio!)"
     print(f"🔑 Usando '{args.env_file}' — SPOTIFY_CLIENT_ID = {shown}")
 
-    # Se --env-file for usado sem --account, cada arquivo de credenciais ganha
-    # seu próprio cache de token por padrão (evita misturar login de apps
-    # diferentes, ex.: .env.app2 -> cache com o apelido "app2").
-    account = args.account
-    if not account and args.env_file != ".env":
-        stem = os.path.basename(args.env_file).removeprefix(".env").strip(".")
-        account = stem or None
-    cache_path = f".cache-flowlist-{account}" if account else ".cache-flowlist"
+    account = config.derive_account(args.env_file, args.account)
+    cache_path = config.cache_path_for(account)
+
+    params = pipeline.RunParams(
+        artist=args.artist,
+        playlist=args.playlist,
+        top=args.top,
+        name=args.name,
+        public=args.public,
+        use_getsongbpm=args.use_getsongbpm,
+        debug_bpm=args.debug_bpm,
+        refresh_cache=args.refresh_cache,
+        dry_run=args.dry_run,
+    )
 
     try:
         sp = spotify_client.get_spotify_client(account=account)
-        _run(sp, args)
-    except SpotifyOauthError as e:
-        # Sintoma clássico: você trocou o Client ID/Secret dentro do mesmo
-        # --env-file, mas o token/refresh_token salvo em cache ainda é do
-        # Client ID antigo. A Spotify rejeita a renovação (invalid_client /
-        # invalid_grant) porque o refresh_token não pertence a esse app.
-        raise SystemExit(
-            f"⛔ Erro de autenticação ({e.error or 'erro'}): {e.error_description or e}\n"
-            f"Se você trocou as credenciais em '{args.env_file}' recentemente, o token salvo "
-            f"em '{cache_path}' pode ser de um Client ID antigo. Apague esse arquivo "
-            "e rode de novo pra forçar um login novo."
-        ) from None
-    except SpotifyException as e:
-        if e.http_status == 429:
-            wait = e.headers.get("Retry-After")
-            wait_str = f" (a Spotify pediu pra esperar {_human_time(float(wait))})" if wait else ""
-            raise SystemExit(
-                f"⛔ Rate limit da Spotify atingido pra este app{wait_str}.\n"
-                "Isso não é erro do programa — é um limite da própria Spotify pra apps novos "
-                "(bem mais apertado que o documentado). Espera um pouco e roda de novo; "
-                "evite rodar em sequência rápida enquanto estiver testando."
-            ) from None
-        raise
-
-
-def _run(sp, args: argparse.Namespace) -> None:
-    cache_key = args.artist or spotify_client.extract_playlist_id(args.playlist)
-    cached = None if args.refresh_cache else track_cache.load(cache_key)
-
-    source_name: str | None = None  # nome original da playlist, quando aplicável
-    if cached:
-        pool, source_name = cached
-        print(
-            f"📦 Usando {len(pool)} faixas do cache local de '{cache_key}' — nenhuma "
-            "chamada à Spotify feita pra buscar faixas dessa vez. Use --refresh-cache "
-            "se quiser forçar uma busca nova (ex.: a discografia mudou)."
-        )
-    elif args.artist:
-        pool = spotify_client.get_artist_best_tracks(sp, args.artist)
-    else:
-        pool, source_name = spotify_client.get_playlist_tracks(sp, args.playlist)
-
-    if not pool:
-        raise SystemExit("Nenhuma faixa encontrada. Confira o nome do artista / URL da playlist.")
-
-    got_spotify_features = enrichment.enrich_with_spotify_audio_features(sp, pool)
-    if not got_spotify_features and args.use_getsongbpm:
-        filled = enrichment.enrich_with_getsongbpm(pool, debug=args.debug_bpm)
-        print(f"getsongbpm.com completou {filled}/{len(pool)} faixas.")
-
-    # Salva o POOL INTEIRO (não cortado por --top), já com tempo/key quando
-    # possível. Cortar antes de salvar foi um bug real: um cache gravado com
-    # --top 50 ficava travado em 50 faixas pra sempre, ignorando qualquer
-    # --top maior pedido depois. Salvando o pool cheio, qualquer --top (até
-    # o tamanho da discografia) pode reusar o mesmo cache.
-    track_cache.save(cache_key, pool, source_name=source_name)
-
-    # --top só faz sentido com --artist (get_playlist_tracks já traz a
-    # playlist inteira, que é o que a pessoa pediu pra remixar).
-    tracks = pool
-    if args.artist and len(pool) > args.top:
-        print(f"Usando as {args.top} mais populares de {len(pool)} faixas disponíveis.")
-        tracks = pool[: args.top]
-
-    default_name = f"{args.artist} — Non-Stop Mix" if args.artist else f"{source_name} (Flow Remix)"
-
-    ordered = ordering.build_flow(tracks)
-    ordering.print_flow_report(ordered)
-
-    if args.dry_run:
-        print("(--dry-run: nada foi criado na sua conta Spotify)")
-        return
-
-    playlist_name = args.name or default_name
-    description = "Gerada por flowlist — ordenada por BPM/tom pra crossfade contínuo."
-    url = spotify_client.create_playlist(
-        sp, playlist_name, description, [t.uri for t in ordered], public=args.public
-    )
-
-    print(f"✅ Playlist criada: {playlist_name}")
-    print(f"   {url}\n")
-    print(
-        "Pra ouvir como um mix contínuo: abra o Spotify DESKTOP -> Configurações -> "
-        "Reprodução de música -> ative 'Crossfade das músicas' (arraste pro máximo) "
-        "e, logo abaixo, ative 'Automix'. Isso não dá pra automatizar (não existe "
-        "no player web nem é exposto por nenhuma API) — é um toggle único, depois "
-        "vale pra qualquer playlist que você tocar."
-    )
+        pipeline.run(sp, params)
+    except (SpotifyOauthError, SpotifyException) as e:
+        raise SystemExit(errors.describe_error(e, env_file=args.env_file, cache_path=cache_path)) from None
+    except (ValueError, RuntimeError) as e:
+        raise SystemExit(f"⛔ {e}") from None
 
 
 if __name__ == "__main__":

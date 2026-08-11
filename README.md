@@ -71,7 +71,33 @@ que depois vale pra qualquer playlist.
    no `.env`. Sem isso, a playlist ainda é criada, só que ordenada por
    popularidade em vez de BPM/tom exatos.
 
-## Uso
+## Interface gráfica
+
+Se preferir não usar terminal, tem uma GUI (Tkinter — já vem com o Python,
+nada extra pra instalar):
+```bash
+python gui.py
+```
+
+O que ela faz, tudo na mesma janela:
+- Escolher entre **artista** (melhores músicas da discografia) ou
+  **remixar uma playlist sua já existente** (cola a URL/ID)
+- Selecionar qual arquivo de credenciais usar (detecta os `.env*` da pasta
+  automaticamente)
+- Opções de Top N, nome da playlist, pública/privada, usar getsongbpm.com,
+  forçar busca nova
+- **Pré-visualizar** primeiro (mostra a tabela com BPM/tom/transição de
+  cada faixa, sem mexer na sua conta) — só depois habilita **Criar
+  playlist no Spotify**, que pede confirmação antes de criar de verdade
+- Log em tempo real do que está acontecendo, e as mesmas mensagens de erro
+  amigáveis do CLI (rate limit, token desatualizado, etc.) em vez de um
+  traceback
+
+É a mesma lógica do CLI por baixo (`flowlist/pipeline.py`) — reusa o
+mesmo cache, os mesmos arquivos de credenciais, o mesmo tudo. Rodar pela
+GUI ou pelo `main.py` dá exatamente no mesmo resultado.
+
+## Uso (linha de comando)
 
 Melhores músicas de um artista (discografia inteira, não só o Top 10):
 ```bash
