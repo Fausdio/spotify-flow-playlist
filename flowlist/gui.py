@@ -175,8 +175,8 @@ class FlowlistGUI:
             self.env_combo.set(files[0])
         else:
             self.env_combo.set("")
-            messagebox.showwarning(
-                APP_TITLE,
+            self._alert(
+                "showwarning",
                 "Nenhum arquivo .env encontrado nesta pasta. Copie .env.example para .env "
                 "e preencha suas credenciais do Spotify Developer Dashboard antes de usar.",
             )
@@ -184,22 +184,41 @@ class FlowlistGUI:
     # ------------------------------------------------------- ações ----
 
     def _on_preview(self) -> None:
-        self._start_run(dry_run=True)
+        try:
+            self._start_run(dry_run=True)
+        except Exception as e:  # noqa: BLE001 — nunca deixar o clique morrer em silêncio
+            self._alert("showerror", f"Erro ao iniciar a pré-visualização: {e}")
 
     def _on_create(self) -> None:
-        name = self._last_result.default_name if self._last_result else "esta playlist"
-        if not messagebox.askyesno(
-            APP_TITLE,
-            f"Isso vai criar uma playlist de verdade na sua conta Spotify ('{name}' "
-            "ou o nome que você definiu). Confirma?",
-        ):
-            return
-        self._start_run(dry_run=False)
+        try:
+            name = self._last_result.default_name if self._last_result else "esta playlist"
+            self.root.lift()
+            confirmed = messagebox.askyesno(
+                APP_TITLE,
+                f"Isso vai criar uma playlist de verdade na sua conta Spotify ('{name}' "
+                "ou o nome que você definiu). Confirma?",
+                parent=self.root,
+            )
+            if not confirmed:
+                return
+            self._start_run(dry_run=False)
+        except Exception as e:  # noqa: BLE001
+            self._alert("showerror", f"Erro ao iniciar a criação: {e}")
+
+    def _alert(self, kind: str, message: str) -> None:
+        # showerror/showinfo sem 'parent' às vezes abrem sem roubar o foco no
+        # Windows e ficam escondidos atrás da janela principal — parece que
+        # "não fez nada". Isso força a janela principal (e o diálogo) pra
+        # frente antes de mostrar.
+        self.root.lift()
+        self.root.attributes("-topmost", True)
+        self.root.after(10, lambda: self.root.attributes("-topmost", False))
+        getattr(messagebox, kind)(APP_TITLE, message, parent=self.root)
 
     def _collect_params(self) -> pipeline.RunParams | None:
         env_file = self.env_combo.get()
         if not env_file:
-            messagebox.showerror(APP_TITLE, "Selecione um arquivo de credenciais (.env).")
+            self._alert("showerror", "Selecione um arquivo de credenciais (.env).")
             return None
 
         artist_mode = self.mode.get() == "artist"
@@ -207,10 +226,10 @@ class FlowlistGUI:
         playlist = self.playlist_entry.get().strip() if not artist_mode else None
 
         if artist_mode and not artist:
-            messagebox.showerror(APP_TITLE, "Digite o nome do artista.")
+            self._alert("showerror", "Digite o nome do artista.")
             return None
         if not artist_mode and not playlist:
-            messagebox.showerror(APP_TITLE, "Cole a URL ou o ID da playlist.")
+            self._alert("showerror", "Cole a URL ou o ID da playlist.")
             return None
 
         try:
@@ -232,9 +251,18 @@ class FlowlistGUI:
 
     def _start_run(self, dry_run: bool) -> None:
         if self._worker and self._worker.is_alive():
+            self.status_var.set("Ainda rodando a execução anterior — espera terminar.")
+            self._alert(
+                "showwarning",
+                "Ainda tem uma busca/criação rodando. Espera ela terminar (olha o log e a "
+                "barra de status) antes de clicar de novo.",
+            )
             return
+        self.status_var.set("Verificando os campos…")
+        self.root.update_idletasks()
         params = self._collect_params()
         if params is None:
+            self.status_var.set("Corrija os campos indicados e tente de novo.")
             return
         params.dry_run = dry_run
 
@@ -269,6 +297,12 @@ class FlowlistGUI:
             self._queue.put(("error", f"⛔ Erro inesperado: {e}"))
 
     def _poll_queue(self) -> None:
+        # try/finally é de propósito: se QUALQUER coisa aqui dentro (inclusive
+        # dentro de _on_run_done/_on_run_error) levantar uma exceção não
+        # prevista, o `self.root.after(...)` no fim NUNCA rodaria — e sem
+        # ele, a fila para de ser lida pra sempre e a janela para de reagir
+        # a qualquer clique daí em diante, silenciosamente. Já foi assim
+        # antes desse fix; agora um erro aqui vira log, não trava a GUI.
         try:
             while True:
                 kind, payload = self._queue.get_nowait()
@@ -283,7 +317,10 @@ class FlowlistGUI:
                     self._on_run_error(payload)
         except queue.Empty:
             pass
-        self.root.after(100, self._poll_queue)
+        except Exception as e:  # noqa: BLE001
+            self.status_var.set(f"Erro interno ao atualizar a tela: {e}")
+        finally:
+            self.root.after(100, self._poll_queue)
 
     def _on_run_done(self, result: pipeline.RunResult) -> None:
         self._last_result = result
@@ -303,7 +340,7 @@ class FlowlistGUI:
         if result.playlist_url:
             self.status_var.set(f"✅ Playlist criada: {result.playlist_url}")
             self.create_btn.configure(state="disabled")
-            messagebox.showinfo(APP_TITLE, f"Playlist criada!\n\n{result.playlist_url}")
+            self._alert("showinfo", f"Playlist criada!\n\n{result.playlist_url}")
         else:
             self.status_var.set(f"Pré-visualização pronta — {len(result.ordered_tracks)} faixas.")
             self.create_btn.configure(state="normal")
@@ -316,7 +353,7 @@ class FlowlistGUI:
         self.log_text.insert("end", "\n" + message + "\n")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
-        messagebox.showerror(APP_TITLE, message)
+        self._alert("showerror", message)
 
     @staticmethod
     def _camelot(track) -> str | None:
