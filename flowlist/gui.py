@@ -24,6 +24,50 @@ from .enrichment import key_mode_to_camelot
 
 APP_TITLE = "flowlist — playlists Spotify em ordem de mixagem de DJ"
 
+LOGIN_TIMEOUT_SECONDS = 120
+
+
+def _get_authorized_client(account: str | None):
+    """Autentica com um timeout de verdade.
+
+    O spotipy, sem token em cache, abre um mini-servidor local e ESPERA PRA
+    SEMPRE a resposta do navegador — se `webbrowser.open()` falhar ou abrir
+    sem foco (acontece), trava em silêncio, sem exceção nem log nenhum
+    (o erro dela vai por `logging`, não por print, e nem por aí a GUI
+    percebe). Aqui a autenticação roda numa sub-thread com timeout; se não
+    voltar a tempo, a GUI recupera o controle e mostra a URL pra abrir na
+    mão em vez de ficar "Rodando…" pra sempre sem explicação.
+    """
+    sp = spotify_client.get_spotify_client(account=account)
+    auth_url = sp.auth_manager.get_authorize_url()
+    print(
+        f"🌐 Se o navegador não abrir sozinho em alguns segundos, copie e cole esta "
+        f"URL nele pra fazer login:\n   {auth_url}\n"
+    )
+
+    result: dict = {}
+
+    def _touch() -> None:
+        try:
+            sp.current_user()  # chamada pequena só pra forçar o login agora
+            result["ok"] = True
+        except Exception as e:  # noqa: BLE001
+            result["error"] = e
+
+    t = threading.Thread(target=_touch, daemon=True)
+    t.start()
+    t.join(timeout=LOGIN_TIMEOUT_SECONDS)
+    if t.is_alive():
+        raise TimeoutError(
+            f"O login não foi concluído em {LOGIN_TIMEOUT_SECONDS}s. Confira se um "
+            "navegador abriu (às vezes abre atrás de outras janelas — olha a barra de "
+            "tarefas) e faça login/autorize lá. Se nada abriu, copie a URL impressa no "
+            "log acima e cole no navegador na mão."
+        )
+    if "error" in result:
+        raise result["error"]
+    return sp
+
 
 class _QueueWriter(io.TextIOBase):
     """Arquivo-like que joga cada .write() numa fila, pra thread de fundo
@@ -274,7 +318,9 @@ class FlowlistGUI:
 
         self.preview_btn.configure(state="disabled")
         self.create_btn.configure(state="disabled")
-        self.status_var.set("Rodando… (o navegador pode abrir pra você aprovar o login)")
+        self.status_var.set(
+            f"Rodando… o navegador pode abrir pra você aprovar o login (até {LOGIN_TIMEOUT_SECONDS}s)"
+        )
 
         self._worker = threading.Thread(target=self._worker_run, args=(params, self._env_file), daemon=True)
         self._worker.start()
@@ -286,7 +332,7 @@ class FlowlistGUI:
                 if not load_dotenv(env_file, override=True):
                     print(f"⚠ Não achei/'{env_file}' está vazio — conferindo variáveis já existentes.")
                 account = config.derive_account(env_file)
-                sp = spotify_client.get_spotify_client(account=account)
+                sp = _get_authorized_client(account)
                 result = pipeline.run(sp, params)
             self._queue.put(("done", result))
         except (SpotifyOauthError, SpotifyException) as e:
