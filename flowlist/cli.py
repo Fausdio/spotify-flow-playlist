@@ -6,6 +6,7 @@ import sys
 
 from dotenv import load_dotenv
 from spotipy import SpotifyException
+from spotipy.oauth2 import SpotifyOauthError
 
 from . import enrichment, ordering, spotify_client, track_cache
 
@@ -77,10 +78,22 @@ def main(argv: list[str] | None = None) -> None:
     if not account and args.env_file != ".env":
         stem = os.path.basename(args.env_file).removeprefix(".env").strip(".")
         account = stem or None
-    sp = spotify_client.get_spotify_client(account=account)
+    cache_path = f".cache-flowlist-{account}" if account else ".cache-flowlist"
 
     try:
+        sp = spotify_client.get_spotify_client(account=account)
         _run(sp, args)
+    except SpotifyOauthError as e:
+        # Sintoma clássico: você trocou o Client ID/Secret dentro do mesmo
+        # --env-file, mas o token/refresh_token salvo em cache ainda é do
+        # Client ID antigo. A Spotify rejeita a renovação (invalid_client /
+        # invalid_grant) porque o refresh_token não pertence a esse app.
+        raise SystemExit(
+            f"⛔ Erro de autenticação ({e.error or 'erro'}): {e.error_description or e}\n"
+            f"Se você trocou as credenciais em '{args.env_file}' recentemente, o token salvo "
+            f"em '{cache_path}' pode ser de um Client ID antigo. Apague esse arquivo "
+            "e rode de novo pra forçar um login novo."
+        ) from None
     except SpotifyException as e:
         if e.http_status == 429:
             wait = e.headers.get("Retry-After")
