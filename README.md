@@ -128,6 +128,16 @@ Com fallback de BPM via getsongbpm.com:
 python main.py --artist "Twenty One Pilots" --top 30 --use-getsongbpm
 ```
 
+**Nenhuma fonte (Spotify nem getsongbpm) cobre 100% de um artista** — é
+limitação real dos dados, principalmente em faixas mais novas/menos
+conhecidas. Se você quer a playlist inteira mixável, sem faixas "sem BPM"
+misturadas no fim, use `--only-with-bpm`: filtra pra só as faixas com
+BPM/tom confirmado antes de aplicar o `--top` — a playlist final pode
+ficar menor que o pedido, mas fica 100% pronta pra mix:
+```bash
+python main.py --artist "Twenty One Pilots" --top 30 --use-getsongbpm --only-with-bpm
+```
+
 Outras opções: `--name "Nome da playlist"`, `--public` (padrão é privada).
 
 Testando com mais de uma conta Spotify? Use `--account apelido` pra cada
