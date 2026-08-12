@@ -16,6 +16,8 @@ import spotipy
 from spotipy import SpotifyException
 from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
 
+from .text_utils import strip_noise_suffix
+
 SCOPES = "playlist-modify-public playlist-modify-private playlist-read-private"
 
 # Sem lote, get_artist_best_tracks dispara uma chamada por álbum e uma por
@@ -24,19 +26,13 @@ SCOPES = "playlist-modify-public playlist-modify-private playlist-read-private"
 # qualquer limite diário. Esse intervalo mantém o ritmo bem abaixo disso.
 _REQUEST_DELAY = 0.15
 
-# Sufixos comuns de versões alternativas, usados só para deduplicar
-# (ex.: não colocar "Stressed Out" e "Stressed Out - Live" duas vezes).
-_VARIANT_SUFFIXES = re.compile(
-    r"\s*[-–(\[]\s*(live|ao vivo|acoustic|acústic\w+|remix|remaster\w*|"
-    r"radio edit|edit|mono|stereo|deluxe|bonus track|"
-    r"mtv unplugged|karaoke|instrumental|sped up|slowed).*$",
-    re.IGNORECASE,
-)
-
 
 def normalize_title(title: str) -> str:
-    """Reduz o nome da faixa à 'versão base', pra deduplicar regravações."""
-    base = _VARIANT_SUFFIXES.sub("", title)
+    """Reduz o nome da faixa à 'versão base', pra deduplicar regravações
+    (ex.: "Blood In The Cut" e "Blood In The Cut - Ojivolta Remix" viram a
+    mesma chave — sem isso, cada remix/sessão/feat. vira uma entrada
+    "única" separada na hora de escolher as melhores faixas)."""
+    base = strip_noise_suffix(title)
     base = re.sub(r"[^\w\s]", "", base).strip().lower()
     return base
 

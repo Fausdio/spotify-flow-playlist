@@ -22,13 +22,13 @@ Fonte 2 (opcional, --use-getsongbpm): API pública da getsongbpm.com,
 from __future__ import annotations
 
 import os
-import re
 import time
 
 import requests
 from spotipy import SpotifyException
 
 from .spotify_client import Track
+from .text_utils import title_variants as _title_variants
 
 GETSONGBPM_BASE = "https://api.getsong.co"
 
@@ -38,32 +38,8 @@ GETSONGBPM_BASE = "https://api.getsong.co"
 # mesmo a música "base" estando lá. Isso NÃO toca a API da Spotify — é tudo
 # contra a getsongbpm, então dá pra tentar à vontade sem risco de rate
 # limit, só o tempo de espera entre chamadas por educação com o serviço.
-_NOISE_KEYWORDS = (
-    r"feat\.?|featuring|with|live|ao vivo|acoustic|acústic\w+|remix|"
-    r"remaster\w*|radio edit|edit|mono|stereo|deluxe|bonus track|"
-    r"mtv unplugged|karaoke|instrumental|sped up|slowed|version|sessions?|demo|extended"
-)
-_PAREN_NOISE = re.compile(rf"\s*[\(\[][^\)\]]*\b(?:{_NOISE_KEYWORDS})\b[^\)\]]*[\)\]]", re.IGNORECASE)
-_DASH_NOISE = re.compile(rf"\s*[-–]\s*(?:(?!\s[-–]\s).)*\b(?:{_NOISE_KEYWORDS})\b.*$", re.IGNORECASE)
-
-
-def _title_variants(name: str) -> list[str]:
-    """Do título mais específico pro mais genérico, em ordem de tentativa."""
-    variants = [name]
-
-    cleaned = _PAREN_NOISE.sub("", name)
-    cleaned = _DASH_NOISE.sub("", cleaned).strip()
-    if cleaned and cleaned not in variants:
-        variants.append(cleaned)
-
-    # último recurso: tira QUALQUER parênteses/colchete, seja qual for o
-    # conteúdo (ex.: "T-Rex (from the Netflix Film ...)")
-    bare = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", name)
-    bare = re.sub(r"\s{2,}", " ", bare).strip()
-    if bare and bare not in variants:
-        variants.append(bare)
-
-    return variants
+# (a lógica de limpeza de título mora em text_utils.py, compartilhada com
+# o dedup de spotify_client.normalize_title)
 
 # key (pitch class 0-11) + mode (0=menor,1=maior) -> código Camelot
 _PITCH_CLASSES = ["C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B"]

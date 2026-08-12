@@ -192,6 +192,11 @@ class FlowlistGUI:
             opts_frame, text="Forçar busca nova (ignorar cache local)",
             variable=self.refresh_cache_var
         ).grid(row=2, column=2, sticky="w", padx=6, pady=2)
+        self.only_with_bpm_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            opts_frame, text="Só faixas com BPM/tom confirmado (playlist pode ficar menor, mas 100% mixável)",
+            variable=self.only_with_bpm_var
+        ).grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=2)
 
         btn_frame = ttk.Frame(self.root)
         btn_frame.pack(fill="x", **pad)
@@ -322,6 +327,7 @@ class FlowlistGUI:
             public=self.public_var.get(),
             use_getsongbpm=self.getsongbpm_var.get(),
             refresh_cache=self.refresh_cache_var.get(),
+            only_with_bpm=self.only_with_bpm_var.get(),
             dry_run=True,  # sobrescrito abaixo por _start_run
         )
 

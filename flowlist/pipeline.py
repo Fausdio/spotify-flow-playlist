@@ -25,6 +25,7 @@ class RunParams:
     use_getsongbpm: bool = False
     debug_bpm: bool = False
     refresh_cache: bool = False
+    only_with_bpm: bool = False
     dry_run: bool = True
 
 
@@ -69,10 +70,32 @@ def run(sp, params: RunParams) -> RunResult:
     # spotify_client.get_artist_best_tracks sobre por que isso importa.
     track_cache.save(cache_key, pool, source_name=source_name)
 
-    tracks = pool
-    if params.artist and len(pool) > params.top:
-        print(f"Usando as {params.top} mais populares de {len(pool)} faixas disponíveis.")
-        tracks = pool[: params.top]
+    candidates = pool
+    if params.only_with_bpm:
+        # Nenhuma fonte de BPM (Spotify ou getsongbpm) cobre 100% de um
+        # artista — é limitação real dos dados, não tem como forçar. Em vez
+        # de devolver --top faixas com sobras sem BPM jogadas no fim, filtra
+        # ANTES de cortar: a playlist final fica menor que o pedido (se
+        # precisar), mas inteira mixável, sem nenhuma faixa "?" atrapalhando.
+        with_bpm = [t for t in candidates if t.tempo]
+        if len(with_bpm) < len(candidates):
+            print(
+                f"🎯 --only-with-bpm: usando só as {len(with_bpm)} faixas (de {len(candidates)}) "
+                "que têm BPM/tom confirmado — a playlist final vai ficar com esse tanto, não "
+                f"necessariamente {params.top}, mas 100% pronta pra mixar sem sobra no fim."
+            )
+        candidates = with_bpm
+
+    tracks = candidates
+    if params.artist and len(candidates) > params.top:
+        print(f"Usando as {params.top} mais populares de {len(candidates)} faixas disponíveis.")
+        tracks = candidates[: params.top]
+
+    if not tracks:
+        raise RuntimeError(
+            "Nenhuma faixa com BPM/tom confirmado sobrou depois do --only-with-bpm. "
+            "Tente sem essa opção, ou rode com --use-getsongbpm se ainda não tinha usado."
+        )
 
     default_name = (
         f"{params.artist} — Non-Stop Mix" if params.artist else f"{source_name} (Flow Remix)"

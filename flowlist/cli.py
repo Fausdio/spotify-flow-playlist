@@ -28,6 +28,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                     help="Se a Spotify bloquear audio-features, tenta completar via getsongbpm.com (precisa de API key no .env)")
     p.add_argument("--debug-bpm", action="store_true", help="Mostra as respostas cruas da API de BPM")
     p.add_argument(
+        "--only-with-bpm",
+        action="store_true",
+        help="Só inclui faixas com BPM/tom confirmado (filtra ANTES de aplicar --top) — a "
+        "playlist final pode ficar com menos faixas que o pedido, mas fica inteira mixável, "
+        "sem faixas sem BPM misturadas no fim",
+    )
+    p.add_argument(
         "--refresh-cache",
         action="store_true",
         help="Ignora o cache local de faixas desse artista/playlist e busca tudo de novo na "
@@ -76,6 +83,7 @@ def main(argv: list[str] | None = None) -> None:
         use_getsongbpm=args.use_getsongbpm,
         debug_bpm=args.debug_bpm,
         refresh_cache=args.refresh_cache,
+        only_with_bpm=args.only_with_bpm,
         dry_run=args.dry_run,
     )
 
