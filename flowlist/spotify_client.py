@@ -129,7 +129,12 @@ def _track_from_full_object(t: dict) -> Track:
 
 
 def find_artist_id(sp: spotipy.Spotify, artist_name: str) -> tuple[str, str]:
-    result = sp.search(q=f"artist:{artist_name}", type="artist", limit=10)
+    # Sem o prefixo "artist:" de propósito: esse filtro de campo é rígido
+    # (zero tolerância a erro de digitação — "bottleman" em vez de
+    # "bottlemen" já dava zero resultados). A busca geral da Spotify, com
+    # só type="artist" pra restringir o tipo, é bem mais tolerante a
+    # pequenos erros e ainda assim manda o artista certo em 1º lugar.
+    result = sp.search(q=artist_name, type="artist", limit=10)
     items = result["artists"]["items"]
     if not items:
         raise SystemExit(f"Nenhum artista encontrado para '{artist_name}'.")
