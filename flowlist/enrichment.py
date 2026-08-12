@@ -156,12 +156,23 @@ def _lookup_getsongbpm(api_key: str, title: str, artist: str, debug: bool, track
     return results[0]
 
 
+NOT_FOUND_MARKER = "getsongbpm_not_found"
+
+
 def enrich_with_getsongbpm(tracks: list[Track], debug: bool = False, delay_seconds: float = 1.0) -> int:
     """Preenche (sequencialmente, com pausa educada) as faixas que ainda não
     têm tempo/key. Pra cada uma, tenta o título exato primeiro e, se não
     achar, tenta versões mais "limpas" do título (sem "- Live", "(feat. X)",
     "- Session", etc.) — a getsongbpm.com geralmente só tem a versão base
-    catalogada. Retorna quantas faixas foram enriquecidas."""
+    catalogada.
+
+    Faixas que esgotam todas as tentativas sem sucesso ficam marcadas
+    (`source = "getsongbpm_not_found"`) — isso vai pro cache local, então
+    reruns seguintes não tentam de novo essas faixas conhecidas (só as
+    novas). Erro de rede não conta como "não encontrada" (pode ser só um
+    problema passageiro); só uma resposta vazia de verdade marca.
+
+    Retorna quantas faixas foram enriquecidas nesta chamada."""
     api_key = os.environ.get("GETSONGBPM_API_KEY")
     if not api_key:
         print("⚠ --use-getsongbpm pedido, mas GETSONGBPM_API_KEY não está no .env. Pulando.")
@@ -169,14 +180,24 @@ def enrich_with_getsongbpm(tracks: list[Track], debug: bool = False, delay_secon
 
     filled = 0
     fallback_hits = 0
-    pending = [t for t in tracks if t.tempo is None]
+    already_known = sum(1 for t in tracks if t.tempo is None and t.source == NOT_FOUND_MARKER)
+    pending = [t for t in tracks if t.tempo is None and t.source != NOT_FOUND_MARKER]
+    if already_known:
+        print(
+            f"   ({already_known} faixa(s) já tinham sido buscadas antes e não foram "
+            "encontradas — pulando de novo. Use --refresh-cache pra tentar tudo de novo.)"
+        )
+
     for track in pending:
         artist = track.artists.split(",")[0].strip()
+        found = False
+        network_error = False
         for attempt, title in enumerate(_title_variants(track.name)):
             try:
                 song = _lookup_getsongbpm(api_key, title, artist, debug, track.name)
             except requests.RequestException as e:
                 print(f"⚠ getsongbpm falhou para '{track.name}': {e}")
+                network_error = True
                 break  # erro de rede — não adianta insistir agora, vai pra próxima faixa
             finally:
                 time.sleep(delay_seconds)  # respeita o serviço, mesmo em erro/sem resultado
@@ -190,9 +211,13 @@ def enrich_with_getsongbpm(tracks: list[Track], debug: bool = False, delay_secon
                 track.mode = mode
                 track.source = "getsongbpm"
                 filled += 1
+                found = True
                 if attempt > 0:
                     fallback_hits += 1
                 break
+
+        if not found and not network_error:
+            track.source = NOT_FOUND_MARKER
 
     if fallback_hits:
         print(f"   (dessas, {fallback_hits} só foram encontradas tentando um título simplificado)")
