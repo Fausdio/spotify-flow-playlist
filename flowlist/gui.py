@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import queue
 import threading
 import time
 import tkinter as tk
 import webbrowser
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -128,6 +129,7 @@ class FlowlistGUI:
         self._queue: queue.Queue = queue.Queue()
         self._worker: threading.Thread | None = None
         self._last_result: pipeline.RunResult | None = None
+        self._last_preview_params: pipeline.RunParams | None = None
 
         self._build_widgets()
         self._refresh_env_files()
@@ -178,25 +180,39 @@ class FlowlistGUI:
         self.name_entry = ttk.Entry(opts_frame, width=40)
         self.name_entry.grid(row=1, column=1, columnspan=2, sticky="w", padx=6, pady=4)
 
+        ttk.Label(opts_frame, text="Descrição (opcional):").grid(row=2, column=0, sticky="e", padx=6, pady=4)
+        self.description_entry = ttk.Entry(opts_frame, width=55)
+        self.description_entry.grid(row=2, column=1, columnspan=3, sticky="w", padx=6, pady=4)
+
+        ttk.Label(opts_frame, text="Capa (opcional):").grid(row=3, column=0, sticky="e", padx=6, pady=4)
+        self.cover_image_path: str | None = None
+        self.cover_label_var = tk.StringVar(value="(nenhuma escolhida)")
+        ttk.Label(opts_frame, textvariable=self.cover_label_var, foreground="#555").grid(
+            row=3, column=1, sticky="w", padx=6, pady=4
+        )
+        ttk.Button(opts_frame, text="Escolher imagem…", command=self._on_pick_cover).grid(
+            row=3, column=2, sticky="w", padx=6, pady=4
+        )
+
         self.public_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(opts_frame, text="Playlist pública", variable=self.public_var).grid(
-            row=2, column=0, sticky="w", padx=6, pady=2
+            row=4, column=0, sticky="w", padx=6, pady=2
         )
         self.getsongbpm_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             opts_frame, text="Usar getsongbpm.com se a Spotify bloquear BPM/tom",
             variable=self.getsongbpm_var
-        ).grid(row=2, column=1, sticky="w", padx=6, pady=2)
+        ).grid(row=4, column=1, sticky="w", padx=6, pady=2)
         self.refresh_cache_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             opts_frame, text="Forçar busca nova (ignorar cache local)",
             variable=self.refresh_cache_var
-        ).grid(row=2, column=2, sticky="w", padx=6, pady=2)
+        ).grid(row=4, column=2, sticky="w", padx=6, pady=2)
         self.only_with_bpm_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             opts_frame, text="Só faixas com BPM/tom confirmado (playlist pode ficar menor, mas 100% mixável)",
             variable=self.only_with_bpm_var
-        ).grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=2)
+        ).grid(row=5, column=0, columnspan=3, sticky="w", padx=6, pady=2)
 
         btn_frame = ttk.Frame(self.root)
         btn_frame.pack(fill="x", **pad)
@@ -270,19 +286,75 @@ class FlowlistGUI:
         except Exception as e:  # noqa: BLE001 — nunca deixar o clique morrer em silêncio
             self._alert("showerror", f"Erro ao iniciar a pré-visualização: {e}")
 
+    def _on_pick_cover(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Escolher capa da playlist (JPEG, até 256KB)",
+            filetypes=[("Imagem JPEG", "*.jpg *.jpeg"), ("Todos os arquivos", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            size = os.path.getsize(path)
+            with open(path, "rb") as f:
+                header = f.read(2)
+        except OSError as e:
+            self._alert("showerror", f"Não consegui ler o arquivo: {e}")
+            return
+        if size > 256 * 1024:
+            self._alert(
+                "showerror",
+                f"Imagem tem {size / 1024:.0f}KB — a Spotify só aceita até 256KB. Escolha uma menor.",
+            )
+            return
+        if header != b"\xff\xd8":
+            self._alert(
+                "showerror",
+                "A Spotify só aceita capa em JPEG (.jpg/.jpeg). Escolha outro arquivo.",
+            )
+            return
+        self.cover_image_path = path
+        self.cover_label_var.set(os.path.basename(path))
+
     def _on_create(self) -> None:
         try:
-            name = self._last_result.default_name if self._last_result else "esta playlist"
+            params = self._collect_params()
+            if params is None:
+                return
+
+            # Reusa o resultado da pré-visualização em vez de rebuscar/
+            # reenriquecer tudo de novo — só é seguro se os campos que
+            # decidem QUAIS faixas entram não mudaram desde então. Nome,
+            # descrição, capa e público/privado não afetam isso, podem ter
+            # mudado à vontade.
+            identity_fields = ("artist", "playlist", "top", "use_getsongbpm", "refresh_cache", "only_with_bpm")
+            reusable = (
+                self._last_result is not None
+                and self._last_preview_params is not None
+                and all(
+                    getattr(self._last_preview_params, f) == getattr(params, f)
+                    for f in identity_fields
+                )
+            )
+            if not reusable:
+                self._alert(
+                    "showwarning",
+                    "Os campos mudaram desde a última pré-visualização (ou ainda não rodou "
+                    "uma). Clique em Pré-visualizar de novo antes de criar — assim não busca "
+                    "e reanalisa tudo em dobro.",
+                )
+                return
+
+            name = params.name or self._last_result.default_name
             self.root.lift()
             confirmed = messagebox.askyesno(
                 APP_TITLE,
-                f"Isso vai criar uma playlist de verdade na sua conta Spotify ('{name}' "
-                "ou o nome que você definiu). Confirma?",
+                f"Isso vai criar a playlist '{name}' de verdade na sua conta Spotify "
+                f"({len(self._last_result.ordered_tracks)} faixas). Confirma?",
                 parent=self.root,
             )
             if not confirmed:
                 return
-            self._start_run(dry_run=False)
+            self._start_publish(params)
         except Exception as e:  # noqa: BLE001
             self._alert("showerror", f"Erro ao iniciar a criação: {e}")
 
@@ -324,6 +396,8 @@ class FlowlistGUI:
             playlist=playlist,
             top=top,
             name=self.name_entry.get().strip() or None,
+            description=self.description_entry.get().strip() or None,
+            cover_image_path=self.cover_image_path,
             public=self.public_var.get(),
             use_getsongbpm=self.getsongbpm_var.get(),
             refresh_cache=self.refresh_cache_var.get(),
@@ -360,6 +434,7 @@ class FlowlistGUI:
             f"Rodando… o navegador pode abrir pra você aprovar o login (até {LOGIN_TIMEOUT_SECONDS}s)"
         )
 
+        self._last_preview_params = params if dry_run else self._last_preview_params
         self._worker = threading.Thread(target=self._worker_run, args=(params, self._env_file), daemon=True)
         self._worker.start()
 
@@ -378,6 +453,46 @@ class FlowlistGUI:
             msg = errors.describe_error(e, env_file=env_file, cache_path=config.cache_path_for(account))
             self._queue.put(("error", msg))
         except Exception as e:  # noqa: BLE001 — GUI: qualquer coisa vira mensagem, nunca crash
+            self._queue.put(("error", f"⛔ Erro inesperado: {e}"))
+
+    def _start_publish(self, params: pipeline.RunParams) -> None:
+        # Caminho leve pro botão "Criar playlist": reusa self._last_result
+        # (já buscado/enriquecido/ordenado pela pré-visualização) e só cria
+        # a playlist de verdade — sem repetir busca nem enriquecimento, ou
+        # seja, sem gastar a cota da Spotify em dobro.
+        if self._worker and self._worker.is_alive():
+            self.status_var.set("Ainda rodando a execução anterior — espera terminar.")
+            self._alert(
+                "showwarning",
+                "Ainda tem uma busca/criação rodando. Espera ela terminar antes de clicar de novo.",
+            )
+            return
+        self.preview_btn.configure(state="disabled")
+        self.create_btn.configure(state="disabled")
+        self.status_var.set(
+            f"Criando a playlist… o navegador pode abrir pra você aprovar o login (até {LOGIN_TIMEOUT_SECONDS}s)"
+        )
+        self._worker = threading.Thread(
+            target=self._worker_publish, args=(params, self._env_file), daemon=True
+        )
+        self._worker.start()
+
+    def _worker_publish(self, params: pipeline.RunParams, env_file: str) -> None:
+        writer = _QueueWriter(self._queue)
+        try:
+            with contextlib.redirect_stdout(writer):
+                if not load_dotenv(env_file, override=True):
+                    print(f"⚠ Não achei/'{env_file}' está vazio — conferindo variáveis já existentes.")
+                account = config.derive_account(env_file)
+                sp = _get_authorized_client(account)
+                url = pipeline.publish(sp, self._last_result, params)
+            self._last_result.playlist_url = url
+            self._queue.put(("done", self._last_result))
+        except (SpotifyOauthError, SpotifyException) as e:
+            account = config.derive_account(env_file)
+            msg = errors.describe_error(e, env_file=env_file, cache_path=config.cache_path_for(account))
+            self._queue.put(("error", msg))
+        except Exception as e:  # noqa: BLE001
             self._queue.put(("error", f"⛔ Erro inesperado: {e}"))
 
     def _poll_queue(self) -> None:

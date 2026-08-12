@@ -5,6 +5,12 @@ ordenar -> opcionalmente criar a playlist), independente de quem chama
 essas mensagens (a GUI, por exemplo) redireciona sys.stdout ao redor da
 chamada; é o jeito mais simples de reusar spotify_client/ordering como
 estão, sem precisar passar callback de log por todo canto.
+
+`prepare()` e `publish()` são separados de propósito: uma "Pré-visualizar"
+seguida de "Criar playlist" (fluxo normal da GUI) não deve rebuscar e
+reenriquecer tudo de novo — isso já rodou na pré-visualização. `publish()`
+só usa o resultado que já foi calculado; a única chamada nova à Spotify
+é a de criar a playlist (e, se pedido, subir a capa).
 """
 
 from __future__ import annotations
@@ -14,6 +20,8 @@ from dataclasses import dataclass
 from . import enrichment, ordering, spotify_client, track_cache
 from .spotify_client import Track
 
+DEFAULT_DESCRIPTION = "Gerada por flowlist — ordenada por BPM/tom pra crossfade contínuo."
+
 
 @dataclass
 class RunParams:
@@ -21,6 +29,8 @@ class RunParams:
     playlist: str | None = None
     top: int = 30
     name: str | None = None
+    description: str | None = None
+    cover_image_path: str | None = None
     public: bool = False
     use_getsongbpm: bool = False
     debug_bpm: bool = False
@@ -36,7 +46,10 @@ class RunResult:
     playlist_url: str | None = None  # None quando foi só preview (dry_run)
 
 
-def run(sp, params: RunParams) -> RunResult:
+def prepare(sp, params: RunParams) -> RunResult:
+    """Busca (ou usa cache) + enriquece com BPM/tom + ordena. Não cria nada
+    na Spotify — é a parte "cara" (chamadas de fetch), separada de propósito
+    de publish() pra poder ser reusada sem rebuscar."""
     if not params.artist and not params.playlist:
         raise ValueError("Informe --artist ou --playlist (um dos dois).")
     if params.artist and params.playlist:
@@ -104,15 +117,24 @@ def run(sp, params: RunParams) -> RunResult:
     ordered = ordering.build_flow(tracks)
     ordering.print_flow_report(ordered)
 
-    if params.dry_run:
-        print("(pré-visualização: nada foi criado na sua conta Spotify)")
-        return RunResult(ordered_tracks=ordered, default_name=default_name, playlist_url=None)
+    return RunResult(ordered_tracks=ordered, default_name=default_name, playlist_url=None)
 
-    playlist_name = params.name or default_name
-    description = "Gerada por flowlist — ordenada por BPM/tom pra crossfade contínuo."
+
+def publish(sp, result: RunResult, params: RunParams) -> str:
+    """Cria a playlist de verdade a partir de um RunResult já calculado
+    (por prepare()) — não busca nem enriquece nada de novo."""
+    playlist_name = params.name or result.default_name
+    description = params.description or DEFAULT_DESCRIPTION
     url = spotify_client.create_playlist(
-        sp, playlist_name, description, [t.uri for t in ordered], public=params.public
+        sp, playlist_name, description, [t.uri for t in result.ordered_tracks], public=params.public
     )
+
+    if params.cover_image_path:
+        try:
+            spotify_client.set_playlist_cover(sp, url, params.cover_image_path)
+            print("🖼 Capa da playlist atualizada.")
+        except Exception as e:  # noqa: BLE001 — não falha a criação por causa da capa
+            print(f"⚠ Playlist criada, mas não consegui trocar a capa: {e}")
 
     print(f"✅ Playlist criada: {playlist_name}")
     print(f"   {url}\n")
@@ -121,4 +143,15 @@ def run(sp, params: RunParams) -> RunResult:
         "Mixar -> Editar -> Smart Reorder (recurso nativo, faz a mixagem de verdade). "
         "Sem Premium, use Configurações -> Reprodução de música -> Crossfade no desktop."
     )
-    return RunResult(ordered_tracks=ordered, default_name=default_name, playlist_url=url)
+    return url
+
+
+def run(sp, params: RunParams) -> RunResult:
+    """Atalho prepare()+publish() num passo só — usado pelo CLI (que não
+    precisa reusar preview, já é uma chamada única do início ao fim)."""
+    result = prepare(sp, params)
+    if params.dry_run:
+        print("(pré-visualização: nada foi criado na sua conta Spotify)")
+        return result
+    result.playlist_url = publish(sp, result, params)
+    return result

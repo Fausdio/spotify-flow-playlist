@@ -22,6 +22,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     p.add_argument("--top", type=int, default=30, help="Quantas faixas incluir (padrão: 30, só com --artist)")
     p.add_argument("--name", help="Nome da playlist criada (padrão: gerado automaticamente)")
+    p.add_argument("--description", help="Descrição da playlist (padrão: um texto genérico explicando que foi gerada pelo flowlist)")
+    p.add_argument(
+        "--cover-image",
+        help="Caminho de uma imagem JPEG (.jpg/.jpeg, até 256KB) pra usar como capa da playlist",
+    )
     p.add_argument("--public", action="store_true", help="Cria a playlist como pública (padrão: privada)")
     p.add_argument("--dry-run", action="store_true", help="Só mostra a ordem sugerida, não cria nada no Spotify")
     p.add_argument("--use-getsongbpm", action="store_true",
@@ -79,6 +84,8 @@ def main(argv: list[str] | None = None) -> None:
         playlist=args.playlist,
         top=args.top,
         name=args.name,
+        description=args.description,
+        cover_image_path=args.cover_image,
         public=args.public,
         use_getsongbpm=args.use_getsongbpm,
         debug_bpm=args.debug_bpm,

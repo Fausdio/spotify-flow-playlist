@@ -7,6 +7,7 @@ navegador — é mais robusto e não depende da UI do Spotify não mudar.
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 import time
@@ -291,3 +292,25 @@ def create_playlist(
     for i in range(0, len(uris), 100):  # add_items aceita no máx. 100 por chamada
         sp.playlist_add_items(playlist["id"], uris[i : i + 100])
     return playlist["external_urls"]["spotify"]
+
+
+def set_playlist_cover(sp: spotipy.Spotify, playlist_url_or_id: str, image_path: str) -> None:
+    """Troca a capa da playlist. A Spotify exige JPEG e no máximo 256KB —
+    valida os dois antes de gastar a chamada."""
+    playlist_id = extract_playlist_id(playlist_url_or_id)
+
+    with open(image_path, "rb") as f:
+        raw = f.read()
+
+    if len(raw) > 256 * 1024:
+        raise ValueError(
+            f"Imagem tem {len(raw) / 1024:.0f}KB — a Spotify só aceita até 256KB. "
+            "Comprima ou redimensione a imagem antes."
+        )
+    if raw[:2] != b"\xff\xd8":  # assinatura JPEG (SOI marker)
+        raise ValueError(
+            "A Spotify só aceita capa em JPEG (.jpg/.jpeg). Converta a imagem antes de usar."
+        )
+
+    image_b64 = base64.b64encode(raw).decode("ascii")
+    sp.playlist_upload_cover_image(playlist_id, image_b64)
