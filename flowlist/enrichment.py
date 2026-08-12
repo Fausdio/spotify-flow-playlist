@@ -22,6 +22,7 @@ Fonte 2 (opcional, --use-getsongbpm): API pública da getsongbpm.com,
 from __future__ import annotations
 
 import os
+import re
 import time
 
 import requests
@@ -30,6 +31,39 @@ from spotipy import SpotifyException
 from .spotify_client import Track
 
 GETSONGBPM_BASE = "https://api.getsong.co"
+
+# getsongbpm.com é uma base colaborativa: geralmente só tem a versão
+# "canônica" de uma música catalogada, não remixes/ao vivo/features/sessions
+# específicas. Pra essas, o título exato (como vem da Spotify) nunca bate,
+# mesmo a música "base" estando lá. Isso NÃO toca a API da Spotify — é tudo
+# contra a getsongbpm, então dá pra tentar à vontade sem risco de rate
+# limit, só o tempo de espera entre chamadas por educação com o serviço.
+_NOISE_KEYWORDS = (
+    r"feat\.?|featuring|with|live|ao vivo|acoustic|acústic\w+|remix|"
+    r"remaster\w*|radio edit|edit|mono|stereo|deluxe|bonus track|"
+    r"mtv unplugged|karaoke|instrumental|sped up|slowed|version|sessions?|demo|extended"
+)
+_PAREN_NOISE = re.compile(rf"\s*[\(\[][^\)\]]*\b(?:{_NOISE_KEYWORDS})\b[^\)\]]*[\)\]]", re.IGNORECASE)
+_DASH_NOISE = re.compile(rf"\s*[-–]\s*(?:(?!\s[-–]\s).)*\b(?:{_NOISE_KEYWORDS})\b.*$", re.IGNORECASE)
+
+
+def _title_variants(name: str) -> list[str]:
+    """Do título mais específico pro mais genérico, em ordem de tentativa."""
+    variants = [name]
+
+    cleaned = _PAREN_NOISE.sub("", name)
+    cleaned = _DASH_NOISE.sub("", cleaned).strip()
+    if cleaned and cleaned not in variants:
+        variants.append(cleaned)
+
+    # último recurso: tira QUALQUER parênteses/colchete, seja qual for o
+    # conteúdo (ex.: "T-Rex (from the Netflix Film ...)")
+    bare = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", name)
+    bare = re.sub(r"\s{2,}", " ", bare).strip()
+    if bare and bare not in variants:
+        variants.append(bare)
+
+    return variants
 
 # key (pitch class 0-11) + mode (0=menor,1=maior) -> código Camelot
 _PITCH_CLASSES = ["C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B"]
@@ -106,40 +140,60 @@ def _parse_getsongbpm_song(song: dict) -> tuple[float | None, int | None, int | 
     return tempo, pitch_class, mode
 
 
+def _lookup_getsongbpm(api_key: str, title: str, artist: str, debug: bool, track_name: str) -> dict | None:
+    resp = requests.get(
+        f"{GETSONGBPM_BASE}/search/",
+        params={"api_key": api_key, "type": "both", "lookup": f"song:{title} artist:{artist}"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if debug:
+        print(f"[debug-bpm] {track_name} (tentativa '{title}'): {data}")
+    results = data.get("search")
+    if not results or not isinstance(results, list):
+        return None
+    return results[0]
+
+
 def enrich_with_getsongbpm(tracks: list[Track], debug: bool = False, delay_seconds: float = 1.0) -> int:
-    """Preenche (sequencialmente, com rate-limit educado) as faixas que
-    ainda não têm tempo/key. Retorna quantas faixas foram enriquecidas."""
+    """Preenche (sequencialmente, com pausa educada) as faixas que ainda não
+    têm tempo/key. Pra cada uma, tenta o título exato primeiro e, se não
+    achar, tenta versões mais "limpas" do título (sem "- Live", "(feat. X)",
+    "- Session", etc.) — a getsongbpm.com geralmente só tem a versão base
+    catalogada. Retorna quantas faixas foram enriquecidas."""
     api_key = os.environ.get("GETSONGBPM_API_KEY")
     if not api_key:
         print("⚠ --use-getsongbpm pedido, mas GETSONGBPM_API_KEY não está no .env. Pulando.")
         return 0
 
     filled = 0
+    fallback_hits = 0
     pending = [t for t in tracks if t.tempo is None]
     for track in pending:
-        lookup = f"song:{track.name} artist:{track.artists.split(',')[0]}"
-        try:
-            resp = requests.get(
-                f"{GETSONGBPM_BASE}/search/",
-                params={"api_key": api_key, "type": "both", "lookup": lookup},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if debug:
-                print(f"[debug-bpm] {track.name}: {data}")
-            results = data.get("search") or []
-            if not results or not isinstance(results, list):
+        artist = track.artists.split(",")[0].strip()
+        for attempt, title in enumerate(_title_variants(track.name)):
+            try:
+                song = _lookup_getsongbpm(api_key, title, artist, debug, track.name)
+            except requests.RequestException as e:
+                print(f"⚠ getsongbpm falhou para '{track.name}': {e}")
+                break  # erro de rede — não adianta insistir agora, vai pra próxima faixa
+            finally:
+                time.sleep(delay_seconds)  # respeita o serviço, mesmo em erro/sem resultado
+
+            if song is None:
                 continue
-            tempo, key, mode = _parse_getsongbpm_song(results[0])
+            tempo, key, mode = _parse_getsongbpm_song(song)
             if tempo:
                 track.tempo = tempo
                 track.key = key
                 track.mode = mode
                 track.source = "getsongbpm"
                 filled += 1
-        except requests.RequestException as e:
-            print(f"⚠ getsongbpm falhou para '{track.name}': {e}")
-        time.sleep(delay_seconds)  # respeita rate limit da API deles
+                if attempt > 0:
+                    fallback_hits += 1
+                break
 
+    if fallback_hits:
+        print(f"   (dessas, {fallback_hits} só foram encontradas tentando um título simplificado)")
     return filled
