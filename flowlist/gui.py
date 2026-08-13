@@ -166,6 +166,15 @@ class FlowlistGUI:
         self.playlist_entry = ttk.Entry(source_frame, width=55)
         self.playlist_entry.grid(row=2, column=1, columnspan=3, sticky="w", padx=6, pady=4)
 
+        self.update_in_place_var = tk.BooleanVar(value=False)
+        self.update_in_place_check = ttk.Checkbutton(
+            source_frame,
+            text="⚠ Atualizar a playlist original (substitui a ordem nela) em vez de criar uma cópia",
+            variable=self.update_in_place_var,
+            state="disabled",
+        )
+        self.update_in_place_check.grid(row=3, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 6))
+
         opts_frame = ttk.LabelFrame(self.root, text="Opções")
         opts_frame.pack(fill="x", **pad)
 
@@ -261,6 +270,9 @@ class FlowlistGUI:
         self.artist_entry.configure(state="normal" if artist_mode else "disabled")
         self.top_entry.configure(state="normal" if artist_mode else "disabled")
         self.playlist_entry.configure(state="disabled" if artist_mode else "normal")
+        self.update_in_place_check.configure(state="disabled" if artist_mode else "normal")
+        if artist_mode:
+            self.update_in_place_var.set(False)  # não faz sentido pra --artist, nunca deixa marcado
 
     def _refresh_env_files(self) -> None:
         files = config.discover_env_files(".")
@@ -326,7 +338,10 @@ class FlowlistGUI:
             # decidem QUAIS faixas entram não mudaram desde então. Nome,
             # descrição, capa e público/privado não afetam isso, podem ter
             # mudado à vontade.
-            identity_fields = ("artist", "playlist", "top", "use_getsongbpm", "refresh_cache", "only_with_bpm")
+            identity_fields = (
+                "artist", "playlist", "top", "use_getsongbpm", "refresh_cache",
+                "only_with_bpm", "update_in_place",
+            )
             reusable = (
                 self._last_result is not None
                 and self._last_preview_params is not None
@@ -345,13 +360,26 @@ class FlowlistGUI:
                 return
 
             name = params.name or self._last_result.default_name
+            n_tracks = len(self._last_result.ordered_tracks)
             self.root.lift()
-            confirmed = messagebox.askyesno(
-                APP_TITLE,
-                f"Isso vai criar a playlist '{name}' de verdade na sua conta Spotify "
-                f"({len(self._last_result.ordered_tracks)} faixas). Confirma?",
-                parent=self.root,
-            )
+            if params.update_in_place:
+                confirmed = messagebox.askyesno(
+                    APP_TITLE,
+                    "⚠ ATENÇÃO: isso vai SUBSTITUIR as faixas da playlist ORIGINAL "
+                    f"({params.playlist}) pela nova ordem ({n_tracks} faixas) — a lista "
+                    "atual dela será apagada. A Spotify guarda histórico de versões pra "
+                    "restaurar manualmente pelo app se der ruim, mas o programa não desfaz "
+                    "sozinho. Tem certeza?",
+                    parent=self.root,
+                    icon="warning",
+                )
+            else:
+                confirmed = messagebox.askyesno(
+                    APP_TITLE,
+                    f"Isso vai criar a playlist '{name}' de verdade na sua conta Spotify "
+                    f"({n_tracks} faixas). Confirma?",
+                    parent=self.root,
+                )
             if not confirmed:
                 return
             self._start_publish(params)
@@ -402,6 +430,7 @@ class FlowlistGUI:
             use_getsongbpm=self.getsongbpm_var.get(),
             refresh_cache=self.refresh_cache_var.get(),
             only_with_bpm=self.only_with_bpm_var.get(),
+            update_in_place=(not artist_mode) and self.update_in_place_var.get(),
             dry_run=True,  # sobrescrito abaixo por _start_run
         )
 
@@ -537,9 +566,11 @@ class FlowlistGUI:
 
         self.preview_btn.configure(state="normal")
         if result.playlist_url:
-            self.status_var.set(f"✅ Playlist criada: {result.playlist_url}")
+            was_update = bool(self._last_preview_params and self._last_preview_params.update_in_place)
+            verb = "atualizada" if was_update else "criada"
+            self.status_var.set(f"✅ Playlist {verb}: {result.playlist_url}")
             self.create_btn.configure(state="disabled")
-            self._alert("showinfo", f"Playlist criada!\n\n{result.playlist_url}")
+            self._alert("showinfo", f"Playlist {verb}!\n\n{result.playlist_url}")
         else:
             self.status_var.set(f"Pré-visualização pronta — {len(result.ordered_tracks)} faixas.")
             self.create_btn.configure(state="normal")

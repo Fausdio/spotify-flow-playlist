@@ -294,6 +294,35 @@ def create_playlist(
     return playlist["external_urls"]["spotify"]
 
 
+def replace_playlist_items(sp: spotipy.Spotify, playlist_url_or_id: str, uris: list[str]) -> str:
+    """Substitui TODAS as faixas de uma playlist já existente pela nova
+    ordem — ao contrário de create_playlist, isso mexe na playlist original
+    (irreversível pela API; a Spotify guarda um histórico de versões, então
+    dá pra restaurar manualmente pelo app se precisar, mas o programa não
+    faz isso por você)."""
+    playlist_id = extract_playlist_id(playlist_url_or_id)
+    # replace_items só aceita ~100 URIs de uma vez; o resto entra por cima
+    sp.playlist_replace_items(playlist_id, uris[:100])
+    for i in range(100, len(uris), 100):
+        sp.playlist_add_items(playlist_id, uris[i : i + 100])
+    return f"https://open.spotify.com/playlist/{playlist_id}"
+
+
+def update_playlist_details(
+    sp: spotipy.Spotify,
+    playlist_url_or_id: str,
+    name: str | None = None,
+    description: str | None = None,
+    public: bool | None = None,
+) -> None:
+    """Atualiza nome/descrição/visibilidade de uma playlist existente. Só
+    manda os campos que vieram preenchidos — não sobrescreve o resto."""
+    if name is None and description is None and public is None:
+        return
+    playlist_id = extract_playlist_id(playlist_url_or_id)
+    sp.playlist_change_details(playlist_id, name=name, description=description, public=public)
+
+
 def set_playlist_cover(sp: spotipy.Spotify, playlist_url_or_id: str, image_path: str) -> None:
     """Troca a capa da playlist. A Spotify exige JPEG e no máximo 256KB —
     valida os dois antes de gastar a chamada."""

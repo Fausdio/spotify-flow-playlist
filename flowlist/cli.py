@@ -28,6 +28,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Caminho de uma imagem JPEG (.jpg/.jpeg, até 256KB) pra usar como capa da playlist",
     )
     p.add_argument("--public", action="store_true", help="Cria a playlist como pública (padrão: privada)")
+    p.add_argument(
+        "--update-in-place",
+        action="store_true",
+        help="Só com --playlist: em vez de criar uma cópia remixada, substitui a ordem das "
+        "faixas NA PRÓPRIA playlist original (irreversível pela API — a Spotify guarda "
+        "histórico de versões pra restaurar manualmente se precisar, mas o programa não "
+        "desfaz sozinho)",
+    )
     p.add_argument("--dry-run", action="store_true", help="Só mostra a ordem sugerida, não cria nada no Spotify")
     p.add_argument("--use-getsongbpm", action="store_true",
                     help="Se a Spotify bloquear audio-features, tenta completar via getsongbpm.com (precisa de API key no .env)")
@@ -63,6 +71,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv or sys.argv[1:])
 
+    if args.update_in_place and not args.playlist:
+        raise SystemExit("⛔ --update-in-place só funciona junto com --playlist.")
+
     # override=True é de propósito: por padrão o load_dotenv NÃO sobrescreve
     # uma variável já existente no ambiente. Sem isso, um SPOTIFY_CLIENT_ID
     # deixado em alguma sessão de terminal anterior (ex.: um $env:... manual
@@ -91,6 +102,7 @@ def main(argv: list[str] | None = None) -> None:
         debug_bpm=args.debug_bpm,
         refresh_cache=args.refresh_cache,
         only_with_bpm=args.only_with_bpm,
+        update_in_place=args.update_in_place,
         dry_run=args.dry_run,
     )
 

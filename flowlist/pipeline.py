@@ -36,6 +36,7 @@ class RunParams:
     debug_bpm: bool = False
     refresh_cache: bool = False
     only_with_bpm: bool = False
+    update_in_place: bool = False  # só vale com --playlist: reordena a original em vez de criar cópia
     dry_run: bool = True
 
 
@@ -123,20 +124,30 @@ def prepare(sp, params: RunParams) -> RunResult:
 def publish(sp, result: RunResult, params: RunParams) -> str:
     """Cria a playlist de verdade a partir de um RunResult já calculado
     (por prepare()) — não busca nem enriquece nada de novo."""
-    playlist_name = params.name or result.default_name
-    description = params.description or DEFAULT_DESCRIPTION
-    url = spotify_client.create_playlist(
-        sp, playlist_name, description, [t.uri for t in result.ordered_tracks], public=params.public
-    )
+    uris = [t.uri for t in result.ordered_tracks]
+
+    if params.update_in_place:
+        if not params.playlist:
+            raise ValueError("update_in_place só funciona remixando uma playlist existente (--playlist).")
+        url = spotify_client.replace_playlist_items(sp, params.playlist, uris)
+        spotify_client.update_playlist_details(
+            sp, params.playlist, name=params.name, description=params.description, public=None
+        )
+        verb, playlist_name = "atualizada", params.name or result.default_name
+    else:
+        playlist_name = params.name or result.default_name
+        description = params.description or DEFAULT_DESCRIPTION
+        url = spotify_client.create_playlist(sp, playlist_name, description, uris, public=params.public)
+        verb = "criada"
 
     if params.cover_image_path:
         try:
             spotify_client.set_playlist_cover(sp, url, params.cover_image_path)
             print("🖼 Capa da playlist atualizada.")
-        except Exception as e:  # noqa: BLE001 — não falha a criação por causa da capa
-            print(f"⚠ Playlist criada, mas não consegui trocar a capa: {e}")
+        except Exception as e:  # noqa: BLE001 — não falha a criação/atualização por causa da capa
+            print(f"⚠ Playlist {verb}, mas não consegui trocar a capa: {e}")
 
-    print(f"✅ Playlist criada: {playlist_name}")
+    print(f"✅ Playlist {verb}: {playlist_name}")
     print(f"   {url}\n")
     print(
         "Pra ouvir como um mix contínuo: no Spotify Premium, abra a playlist e toque "
