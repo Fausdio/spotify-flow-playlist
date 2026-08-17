@@ -55,7 +55,7 @@ def get_spotify_client(account: str | None = None) -> spotipy.Spotify:
     redirect_uri = os.environ.get("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
 
     if not client_id or not client_secret:
-        raise SystemExit(
+        raise RuntimeError(
             "Faltam SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET no .env.\n"
             "Veja o README.md -> 'Configuração' para criar seu app gratuito."
         )
@@ -92,7 +92,7 @@ def get_catalog_client() -> spotipy.Spotify:
     client_id = os.environ.get("SPOTIFY_CLIENT_ID")
     client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET")
     if not client_id or not client_secret:
-        raise SystemExit(
+        raise RuntimeError(
             "Faltam SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET no .env.\n"
             "Veja o README.md -> 'Configuração' para criar seu app gratuito."
         )
@@ -138,7 +138,7 @@ def find_artist_id(sp: spotipy.Spotify, artist_name: str) -> tuple[str, str]:
     result = sp.search(q=artist_name, type="artist", limit=10)
     items = result["artists"]["items"]
     if not items:
-        raise SystemExit(f"Nenhum artista encontrado para '{artist_name}'.")
+        raise RuntimeError(f"Nenhum artista encontrado para '{artist_name}'.")
 
     # Nem busca nem lookup individual de artista trazem 'followers'/
     # 'popularity' pra esse tipo de app (restrição descoberta na prática,
@@ -251,28 +251,29 @@ def extract_playlist_id(playlist_url_or_id: str) -> str:
 
 
 def get_playlist_tracks(sp: spotipy.Spotify, playlist_url_or_id: str) -> tuple[list[Track], str]:
+    # Achado testando na prática: em algum momento a Spotify renomeou os
+    # campos do objeto de playlist — o que era `tracks` (com cada entrada
+    # trazendo `track`) virou `items` (com cada entrada trazendo `item`).
+    # Isso não tem nada a ver com dono/colaborador — uma suposição anterior
+    # daqui estava errada: testei com o token da própria dona da playlist e
+    # AINDA ASSIM `tracks` vinha ausente, porque o nome do campo mudou pra
+    # todo mundo, não é uma restrição de permissão.
     playlist_id = extract_playlist_id(playlist_url_or_id)
-    playlist = sp.playlist(playlist_id, fields="name,owner.id,tracks.items(track),tracks.next")
+    playlist = sp.playlist(playlist_id, fields="name,items.items(item),items.next")
     name = playlist["name"]
 
-    # Desde a migração de fev/2026, a Spotify só devolve os itens completos
-    # de uma playlist que você é dono ou colaborador — pra qualquer outra
-    # (inclusive playlists públicas de terceiros), o campo "tracks" some da
-    # resposta sem erro nenhum (confirmado testando na prática). Então
-    # --playlist só funciona com playlists suas por enquanto.
-    if "tracks" not in playlist:
-        raise SystemExit(
-            f"⛔ Não consigo ler as faixas de '{name}' — a Spotify só devolve os "
-            "itens completos de playlists que você é dono ou colaborador (restrição "
-            "deles desde fev/2026, não é bug daqui). Use uma playlist sua, ou clone a "
-            "playlist de terceiro pra sua conta antes de rodar o --playlist nela."
+    if "items" not in playlist:
+        raise RuntimeError(
+            f"Não consigo ler as faixas de '{name}' — a resposta da Spotify veio sem o "
+            "campo esperado. Rode de novo com --debug-bpm ou avise se isso persistir; "
+            "pode ser mais uma mudança de formato da API deles."
         )
 
     tracks: list[Track] = []
-    results = playlist["tracks"]
+    results = playlist["items"]
     while results:
-        for item in results["items"]:
-            t = item.get("track")
+        for entry in results["items"]:
+            t = entry.get("item")
             if t and t.get("id"):
                 tracks.append(_track_from_full_object(t))
         results = sp.next(results) if results.get("next") else None

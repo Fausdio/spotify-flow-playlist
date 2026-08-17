@@ -3,8 +3,8 @@
 Monta playlists com as melhores músicas da discografia inteira de um
 artista (não só o Top 10) — algo que o Spotify não faz nativamente.
 
-Funciona para **qualquer artista** ou **qualquer playlist sua** (dona ou
-colaborador — veja a limitação do `--playlist` mais abaixo).
+Funciona para **qualquer artista** ou **qualquer playlist existente**
+(sua ou de terceiro, contanto que sua conta consiga abrir ela no Spotify).
 
 ## ⚠️ Atualize isto antes de usar: a Spotify já resolveu a parte de mixagem
 
@@ -184,12 +184,15 @@ No **Spotify desktop**:
 
 ## Limitações honestas
 
-- **`--playlist` só funciona com playlist sua (dona ou colaborador):**
-  desde a migração da Spotify de fev/2026, `GET /v1/playlists/{id}` não
-  devolve mais os itens completos de playlists de terceiros (nem as
-  públicas) — o campo `tracks` simplesmente some da resposta, sem erro.
-  O programa detecta isso e avisa em vez de quebrar. Se quiser remixar a
-  playlist de outra pessoa, clone ela pra sua conta primeiro.
+- **⚠️ CORREÇÃO:** a versão anterior deste README dizia que `--playlist`
+  só funcionava com playlist sua (dona/colaborador) por causa de uma
+  restrição de permissão da Spotify. **Isso estava errado.** O que
+  aconteceu de verdade, descoberto testando com o token da própria dona
+  de uma playlist que ainda assim falhava: a Spotify **renomeou os campos**
+  do objeto de playlist (`tracks` → `items`, e cada faixa vinha em `track`
+  → agora vem em `item`) — não é sobre permissão nenhuma. Corrigido pra
+  usar os nomes de campo certos; `--playlist` deve funcionar com qualquer
+  playlist que sua conta consiga abrir (própria, de terceiro, pública).
 - **audio-features da Spotify:** bloqueado por padrão pra apps novos
   desde nov/2024. O programa detecta e avisa; não é bug.
 - **Endpoints "vários de uma vez" (`GET /v1/albums?ids=`, `GET /v1/tracks?ids=`):**
