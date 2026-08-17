@@ -19,7 +19,7 @@ from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
 
 from .text_utils import strip_noise_suffix
 
-SCOPES = "playlist-modify-public playlist-modify-private playlist-read-private"
+SCOPES = "playlist-modify-public playlist-modify-private playlist-read-private ugc-image-upload"
 
 # Sem lote, get_artist_best_tracks dispara uma chamada por álbum e uma por
 # faixa em sequência — sem pausa nenhuma, isso estoura o limite de rajada
